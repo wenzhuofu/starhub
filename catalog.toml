@@ -1,0 +1,376 @@
+# starhub catalog — 唯一数据源。INDEX.md 与 README 的目录部分由 `bin/starhub index` 生成，不要手改。
+#
+# 字段说明
+#   type     skill | tool | app | model | resource       （可组合，如 "tool+skill"）
+#   host     vps      → skill/resource 拉到 VPS 的 vendor 库，按需读取
+#            pc-home  → 工具/MCP/重型应用，装在工程机器上，经 desk 调用
+#            remote   → 不落地，按需读 GitHub raw
+#            hosted   → 用官方在线版
+#            server   → 需独立服务器部署
+#            none     → 暂不部署
+#   status   inbox（新 star 待分拣）| backlog（待试）| trial（试用中）| active（主力）| archived（归档）
+#   skills   仓库内 skill/资源目录（vendor 时只稀疏检出这些路径；空 = 整仓）
+#   ref      固定的 commit；升级走 `starhub outdated` → 审查 → `starhub bump`
+#   conflicts 功能重叠的项目，同一任务里只选一个
+
+[meta]
+github_user = "wenzhuofu"
+
+[meta.categories]
+design = "设计与前端审美"
+diagram = "图表与可视化"
+code-intel = "代码库理解"
+agent-efficiency = "Agent 效率与约束"
+knowledge = "知识转 Skill"
+agent-infra = "Agent 基础设施"
+intel = "信息监控与情报"
+media = "内容创作"
+domain = "专业领域"
+security = "安全与逆向"
+ops = "网络与运维"
+
+# ───────────────────────── 设计与前端审美 ─────────────────────────
+
+[[project]]
+repo = "pbakaus/impeccable"
+type = "skill"
+category = "design"
+host = "vps"
+status = "trial"
+summary = "前端设计词汇与审查：design / redesign / critique / audit / polish / animate，覆盖网页、Dashboard、原生 App 和 DESIGN.md"
+when = "从零做或改造前端 UI，或要对现有界面做设计审查"
+skills = ["plugin/skills/impeccable"]
+needs = "可选 node（live-browser 脚本）；静态扫描可用 npx impeccable detect"
+conflicts = ["Nutlope/hallmark"]
+ref = "b49177d32788f2dc585c42831d845dacf1ebed2c"
+notes = "新设计开始时会向 impeccable.style 拉取视觉方向（联网，关不掉）"
+
+[[project]]
+repo = "Nutlope/hallmark"
+type = "skill"
+category = "design"
+host = "vps"
+status = "trial"
+summary = "反 AI 味的新页面设计 skill，让网站看起来是设计出来的而不是生成的"
+when = "新建网站或新页面；改既有设计必须显式 /hallmark redesign"
+skills = ["skills/hallmark"]
+needs = "可选 node（截图、生图脚本）"
+conflicts = ["pbakaus/impeccable"]
+ref = "04977e15f3dfd6ee4b74c887dac3eb52665d6c92"
+
+[[project]]
+repo = "emilkowalski/skills"
+type = "skill"
+category = "design"
+host = "vps"
+status = "trial"
+summary = "20 个动效与 UI 工艺 skill：animate、review-animations、gestures、apple-design、pick-ui-library、prototype、break-ui 等"
+when = "加动效、审查交互手感、选 UI 库、做原型；可与 impeccable/hallmark 搭配"
+skills = ["skills"]
+ref = "64eb3deb9a5fbfa041faf783e0bc3fd635872e9c"
+
+[[project]]
+repo = "VoltAgent/awesome-design-md"
+type = "resource"
+category = "design"
+host = "vps"
+status = "trial"
+summary = "约 80 个知名品牌设计系统的 DESIGN.md（Airbnb、Apple、Airtable…），放进项目让 agent 照此风格出 UI"
+when = "需要明确的品牌风格参考时，挑一份复制进项目"
+skills = ["design-md"]
+ref = "fcc70284932276d085f01ef9f83edde90b1258cb"
+
+# ───────────────────────── 图表与可视化 ─────────────────────────
+
+[[project]]
+repo = "tt-a1i/archify"
+type = "skill"
+category = "diagram"
+host = "vps"
+status = "trial"
+summary = "架构/流程/时序/数据流/状态/ERD/类图/时间线等可探索 HTML 图，带校验，可导出 SVG/WebM"
+when = "代码库架构图、需要交互探索的技术图"
+skills = ["archify"]
+needs = "node（bin/archify.mjs finalize）"
+conflicts = ["cathrynlavery/diagram-design"]
+ref = "8509a3d63e763b4d454ea9aafa1f939545fcb1ea"
+
+[[project]]
+repo = "cathrynlavery/diagram-design"
+type = "skill"
+category = "diagram"
+host = "vps"
+status = "trial"
+summary = "45 种编辑风格图表（架构、泳道、象限、雷达、组织图、飞轮…），自包含 HTML+SVG，不用 Mermaid"
+when = "文档、方案、汇报里的精美配图"
+skills = ["skills/diagram-design"]
+needs = "可选 python（PNG/SVG 导出，drawio/excalidraw 提取）"
+conflicts = ["tt-a1i/archify"]
+ref = "d7b0176d7e60c6f2ff54067991491ac7622c81fb"
+
+# ───────────────────────── 代码库理解 ─────────────────────────
+
+[[project]]
+repo = "colbymchenry/codegraph"
+type = "tool"
+category = "code-intel"
+host = "pc-home"
+status = "backlog"
+summary = "预建代码知识图谱，保存即自动同步，通过 MCP 供 agent 查询，减少 token 与工具调用"
+when = "长期开发同一个代码库"
+setup = "curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh；项目内 codegraph init && codegraph index"
+conflicts = ["Graphify-Labs/graphify", "Egonex-AI/Understand-Anything"]
+ref = "461a5d87a873a4932997cd9a49042ab30e45a675"
+notes = "同一项目只允许一个 MCP 写入者；不要在 Windows 与 WSL 间共用 .codegraph/"
+
+[[project]]
+repo = "Graphify-Labs/graphify"
+type = "tool+skill"
+category = "code-intel"
+host = "pc-home"
+status = "backlog"
+summary = "代码（tree-sitter 本地解析）+ 文档 + SQL + PDF + 图片 → 可查询知识图谱；/graphify、graphify explain/path"
+when = "代码与文档、Schema、PDF 混杂的项目"
+setup = "uv tool install graphifyy && graphify install"
+conflicts = ["colbymchenry/codegraph", "Egonex-AI/Understand-Anything"]
+ref = "3671f31124fdb1de4ec4e485b1bcd7059726a5f3"
+notes = "PyPI 包名是 graphifyy（两个 y）；纯代码可离线，混合语料需要 LLM 后端"
+
+[[project]]
+repo = "Egonex-AI/Understand-Anything"
+type = "skill+tool"
+category = "code-intel"
+host = "pc-home"
+status = "backlog"
+summary = "代码 → 可交互知识图谱 + dashboard；understand / onboard / explain / diff / chat 等 9 个 skill，偏学习与上手"
+when = "接手、学习陌生代码库，做 onboarding"
+skills = ["understand-anything-plugin/skills"]
+setup = "/plugin marketplace add Egonex-AI/Understand-Anything → /plugin install understand-anything"
+conflicts = ["colbymchenry/codegraph", "Graphify-Labs/graphify"]
+ref = "17550efd7f70c9af683ce2b4bf0bd71f42593500"
+notes = "skill 部分是纯分析，也可在 VPS 上对本地代码使用；dashboard 需 pnpm 构建"
+
+# ───────────────────────── Agent 效率与约束 ─────────────────────────
+
+[[project]]
+repo = "headroomlabs-ai/headroom"
+type = "tool"
+category = "agent-efficiency"
+host = "pc-home"
+status = "backlog"
+summary = "在工具输出、日志、JSON、RAG 片段送进 LLM 前压缩；库 / 代理（headroom proxy）/ MCP 三种形态"
+when = "自建 LLM 应用或 agent 管线要降 token 成本"
+skills = ["skills/headroom"]
+setup = "uv tool install \"headroom-ai[all]\"；代理：headroom proxy --port 8787；TS：npm install headroom-ai"
+ref = "ce0460cfa8598dc939243dbc7aec4b2d35f4e44a"
+notes = "自带 skill 是“给应用接入 headroom”的开发指南"
+
+[[project]]
+repo = "DietrichGebert/ponytail"
+type = "skill"
+category = "agent-efficiency"
+host = "vps"
+status = "trial"
+summary = "“最懒的资深工程师”模式：用最小改动彻底解决问题；附 audit（全仓审计）、review（变更审查）、debt（捷径台账）等"
+when = "任何编码任务防过度设计；仓库质量审计；代码审查"
+skills = ["skills"]
+ref = "ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10"
+
+# ───────────────────────── 知识转 Skill ─────────────────────────
+
+[[project]]
+repo = "virgiliojr94/book-to-skill"
+type = "skill+tool"
+category = "knowledge"
+host = "vps"
+status = "trial"
+summary = "把 PDF/EPUB/DOCX/HTML/MD 等书籍文档转成结构化 agent skill，提取框架、心智模型、原则与技巧"
+when = "系统学习一本书，或把参考资料变成可复用的 skill"
+needs = "python3（book_to_skill 包；HTML 需 trafilatura）"
+ref = "57f3db51ff338edfd940a255b885c60ac90e40fa"
+notes = "生成的 skill 建议放进 starhub 的 local/ 目录统一管理"
+
+# ───────────────────────── Agent 基础设施 ─────────────────────────
+
+[[project]]
+repo = "stablyai/orca"
+type = "app"
+category = "agent-infra"
+host = "vps"
+status = "active"
+summary = "多 agent 编排：用自有订阅并行跑 Claude Code、Codex 等，桌面/手机/远程运行时"
+when = "多任务并行、远程驱动 agent（当前正在使用）"
+conflicts = ["pingdotgg/t3code"]
+ref = "f17aaba5b49f263c10cde47f3ad096f2350fedf8"
+notes = "自带 orca-cli、orchestration 等 skill，随应用提供"
+
+[[project]]
+repo = "pingdotgg/t3code"
+type = "app"
+category = "agent-infra"
+host = "none"
+status = "backlog"
+summary = "从任意电脑或手机控制 Claude Code、Codex 等"
+when = "需要另一套远程控制 agent 的界面"
+conflicts = ["stablyai/orca"]
+ref = "426b5a688852a82b6fd034a42fd59811440e7eb3"
+notes = "与 orca 定位重叠，二选一"
+
+[[project]]
+repo = "HKUDS/CLI-Anything"
+type = "tool+skill"
+category = "agent-infra"
+host = "pc-home"
+status = "backlog"
+summary = "给 GUI 软件生成 agent 可用的 CLI；CLI-Hub 已收录 69 款（Blender、GIMP、Kdenlive、OBS、Zotero、Obsidian、drawio…）"
+when = "要让 agent 操作某个桌面软件"
+setup = "pip install cli-anything-hub && cli-hub install <软件>；或 /plugin marketplace add HKUDS/CLI-Anything"
+ref = "34f519533bc175d2fe287ab8316b0dd99bb9cc43"
+notes = "目标软件本身也必须装在 pc-home"
+
+[[project]]
+repo = "Panniantong/Agent-Reach"
+type = "tool+skill"
+category = "agent-infra"
+host = "pc-home"
+status = "backlog"
+summary = "让 agent 读取和搜索 Twitter、Reddit、YouTube、B站、小红书、GitHub、V2EX 等，零 API 费用"
+when = "调研、抓取社媒与社区内容"
+setup = "按 https://raw.githubusercontent.com/Panniantong/Agent-Reach/main/docs/install.md 安装"
+ref = "c70ae6da5d39bc90e09ad2ae0575ccc89f31e284"
+notes = "PyPI 上同名 agent-reach 包不是本项目，勿装；如需 VPS 上的 agent 直接联网读取，可例外装到 VPS"
+
+[[project]]
+repo = "router-for-me/CLIProxyAPI"
+type = "tool"
+category = "agent-infra"
+host = "server"
+status = "backlog"
+summary = "把 Claude Code、Codex、Antigravity、Grok 等订阅型 CLI 包装成 OpenAI/Gemini/Claude 兼容 API"
+when = "需要用订阅额度对接只支持 API 的工具"
+ref = "6960763455c4ac3d4828fb1736aa5de2183ccecf"
+notes = "可能违反各家订阅服务条款，有封号风险，谨慎使用"
+
+# ───────────────────────── 信息监控与情报 ─────────────────────────
+
+[[project]]
+repo = "sansan0/TrendRadar"
+type = "app"
+category = "intel"
+host = "pc-home"
+status = "backlog"
+summary = "多平台热点 + RSS + 定时联网搜索聚合，关键词/AI 筛选、AI 简报、多渠道推送，自带 MCP 服务"
+when = "长期追踪某些话题、做个人信息流"
+setup = "docker compose（trendradar 推送服务 + trendradar-mcp）"
+ref = "ad2221fae0d908f6c11f40f70680dd5f9b41cd5d"
+
+[[project]]
+repo = "koala73/worldmonitor"
+type = "app"
+category = "intel"
+host = "hosted"
+status = "backlog"
+summary = "实时全球情报面板：新闻聚合、地缘政治、基础设施监控；另有 npx worldmonitor 终端面板与 MCP 工具"
+when = "宏观态势感知"
+setup = "直接用 worldmonitor.app；本地 CLI/MCP 需 Node 24"
+ref = "c140eab2b93d1272300de5e02de930350d053702"
+
+[[project]]
+repo = "bilawalsidhu/gods-eye-view"
+type = "app"
+category = "intel"
+host = "hosted"
+status = "backlog"
+summary = "浏览器里的 3D 地球卫星视角模拟器，叠加真实开源空间数据"
+when = "空间数据可视化参考、演示"
+setup = "官网 godseyeview.ai；本地 docker compose up"
+ref = "d9d79ebc4da7379a1359947d23543b72757221bb"
+
+[[project]]
+repo = "OpenGithubs/github-monthly-rank"
+type = "resource"
+category = "intel"
+host = "remote"
+status = "active"
+summary = "GitHub 每月飙升榜 Top30，按 年/月.md 存放，每月 1 号更新"
+when = "每月发现新项目"
+ref = "94ab5922635986a822fc1ddf2d56a6edfaefe754"
+notes = "读取：https://raw.githubusercontent.com/OpenGithubs/github-monthly-rank/main/<YYYY>/<MM>.md"
+
+# ───────────────────────── 内容创作 ─────────────────────────
+
+[[project]]
+repo = "heygen-com/hyperframes"
+type = "tool+skill"
+category = "media"
+host = "pc-home"
+status = "backlog"
+summary = "HTML 渲染成视频的可编辑 AI 视频框架；skill 覆盖制作、CLI、素材、视频逆向重建（reverse-any-video）、幻灯片"
+when = "做宣传片、讲解视频、字幕、可演示的幻灯片"
+skills = ["skills"]
+setup = "claude plugin marketplace add heygen-com/hyperframes && claude plugin install hyperframes@hyperframes"
+needs = "node、浏览器渲染、ffmpeg"
+ref = "2d72e523ff3e82e2e840be0daa954480a0bcfe14"
+
+[[project]]
+repo = "debpalash/VoiceStudio"
+type = "app"
+category = "media"
+host = "pc-home"
+status = "backlog"
+summary = "本地版 ElevenLabs：声音克隆/设计、配音、转写、有声书，646 种语言；提供 REST API、MCP 与 skill"
+when = "配音、旁白、转写、有声书"
+setup = "curl -fsSL https://voicestudio.sh/install | sh；skill：npx skills add debpalash/VoiceStudio"
+needs = "建议有 GPU"
+ref = "d5dd3c3e529dbaa1720753d9e0e46940ab5175c2"
+
+# ───────────────────────── 专业领域 ─────────────────────────
+
+[[project]]
+repo = "google-research/timesfm"
+type = "model+skill"
+category = "domain"
+host = "pc-home"
+status = "backlog"
+summary = "Google 时间序列预测基础模型，零样本即可预测；附 timesfm-forecasting skill"
+when = "销量、流量、业务指标预测"
+skills = ["timesfm-forecasting"]
+setup = "pip install timesfm[torch]（Apple 芯片用 [mlx]）"
+ref = "918df02c9d366b2145bc5876135fa2131d3ed2a6"
+
+[[project]]
+repo = "anthropics/financial-services"
+type = "skill"
+category = "domain"
+host = "vps"
+status = "trial"
+summary = "Anthropic 官方金融插件集：投行、股研、PE、基金行政等垂直插件，财报复盘、DCF、KYC、月结、对账等 agent 插件，以及 LSEG、S&P Global 合作插件"
+when = "财务建模、估值、财报分析、投行材料"
+skills = ["plugins"]
+needs = "部分 skill 带 python 校验脚本；合作方插件需要对应数据订阅"
+ref = "3e32c2287dcb637c184c01cc0ad82d6af7e9bb0f"
+
+# ───────────────────────── 安全与逆向 ─────────────────────────
+
+[[project]]
+repo = "morluto/rea"
+type = "tool+skill"
+category = "security"
+host = "pc-home"
+status = "backlog"
+summary = "一个 MCP 覆盖逆向工程：原生二进制、Electron/JS、固件、浏览器目标；还能为 web/Linux 应用构建 agent 环境"
+when = "分析某个应用功能的实现原理（仅限有权分析的目标）"
+setup = "npx rea-agents setup"
+ref = "26917581d63ba53345ef70fe02cdc14486b2888a"
+
+# ───────────────────────── 网络与运维 ─────────────────────────
+
+[[project]]
+repo = "MHSanaei/3x-ui"
+type = "app"
+category = "ops"
+host = "server"
+status = "backlog"
+summary = "Xray 多协议代理服务器的 Web 管理面板（VLESS/VMess/Trojan/SS/WireGuard/Hysteria 等，多用户）"
+when = "自建网络代理服务器"
+ref = "5297fd3c8495d80fab97ae511553fa545c69e913"
