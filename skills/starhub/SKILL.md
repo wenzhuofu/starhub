@@ -2,15 +2,22 @@
 name: starhub
 description: 从用户 star 过的 GitHub 项目里挑选合适的 skill、工具或资源来辅助当前任务；也负责维护目录（同步新 star、分拣、检查更新、复盘）。只在用户输入 /starhub 时使用。
 disable-model-invocation: true
-argument-hint: "<任务描述> | 维护"
+argument-hint: "<任务> | 维护 | 同步 | 更新 | 复盘"
 ---
 
 # starhub
 
 用户输入：`$ARGUMENTS`
 
-- 输入是 `维护`、`复盘`、`更新` 或 `review` → 执行下方的「维护流程」。
-- 其他输入，或为空 → 执行「挑选流程」。为空时，以当前对话里正在做的任务为准。
+按第一个词分派：
+
+| 输入 | 执行 |
+|---|---|
+| `维护` | 维护流程的全部步骤 1–4 |
+| `同步` | 只做维护步骤 1、2（拉取新 star 并分拣），然后执行步骤 4 |
+| `更新` | 只运行 `starhub outdated`，逐个审阅并升级（步骤 3 的更新部分），然后执行步骤 4 |
+| `复盘` | 运行 `starhub review`，结合使用记录调整状态（步骤 3 的其余部分），然后执行步骤 4 |
+| 其他内容或为空 | 挑选流程。为空时，以当前对话里正在做的任务为准 |
 
 命令行工具是 `starhub`（`~/.local/bin/starhub`），目录仓库在 `$(dirname "$(readlink -f ~/.local/bin/starhub)")/..`。
 
@@ -28,7 +35,7 @@ argument-hint: "<任务描述> | 维护"
    - `pc-home`：在工程机器上用 desk 工具执行（先加载 `desk:desk` skill）。还没安装的，把 `setup` 字段给用户看，同意后再装。
    - `remote`：按 `notes` 里的 URL 直接读取。
    - `hosted`、`server`、`none`：告诉用户去哪里用，不自行部署。
-6. **结束后**：运行 `starhub log <repo> "<任务> · 好/一般/差 · 原因>"`，然后在目录仓库里提交并推送。
+6. **结束后**：运行 `starhub log <repo> "<任务> · 好/一般/差 · 原因>"`。记录只保存在本地的 usage.jsonl，不进 git，不需要提交。
 
 ## 维护流程（用户大约每半个月主动触发一次）
 
@@ -42,7 +49,7 @@ argument-hint: "<任务描述> | 维护"
    - 取消 star 的 → 归档；
    - 上游有更新的 → 先概括 SKILL.md 的变化，用户同意后再 `starhub bump`；
    - 90 天没用的 → 降级或归档。
-4. 新增的 vps 项目运行 `starhub vendor <repo>`，然后 `starhub index`，最后提交并推送。
+4. 新增的 vps 项目运行 `starhub vendor <repo>`，然后 `starhub index`。先 `git pull`；如果 GitHub 上有自动维护开的、还没合并的 PR，提醒用户先合并或关闭它，避免冲突。然后提交并推送。
 
 ## 安全规则
 

@@ -6,11 +6,37 @@ GitHub star 越积越多，等到真要用时，往往想不起有什么，也�
 
 ## 怎么用
 
-| 场景 | 做法 |
-|---|---|
-| 日常收藏 | 在 GitHub 上点 star，不用做别的 |
-| 干活时想借力 | 输入 `/starhub 帮我做一个产品落地页`，agent 先看索引挑出 1–3 个项目，说明理由，再加载其中一个 skill 来执行 |
-| 定期整理（建议每半个月） | 输入 `/starhub 维护`，会同步新 star 并分拣，出一份复盘报告（取消的 star、上游更新、闲置项目），每一项由你决定怎么处理 |
+**日常收藏**：在 GitHub 上点 star，不用做别的。
+
+**/starhub 指令**（在 Claude Code 对话里输入）：
+
+| 指令 | 作用 | 什么时候用 |
+|---|---|---|
+| `/starhub <任务>` | 先看索引挑出 1–3 个合适的项目并说明理由，再加载其中一个 skill 执行。例：`/starhub 给这个仓库画架构图` | 日常干活时 |
+| `/starhub` | 同上，以当前对话里正在做的任务为准 | 做到一半想借力时 |
+| `/starhub 维护` | 一次做完下面三件事：同步、更新、复盘 | 建议每半个月一次 |
+| `/starhub 同步` | 拉取新 star，读它们的 README 分拣：用途、类型、放 VPS 还是 pc-home，再把 VPS 类的 skill 拉到本地 | 刚 star 了一批新项目 |
+| `/starhub 更新` | 列出上游有新提交的项目，概括变化，你同意后才升级 | 想用某个 skill 的新版本 |
+| `/starhub 复盘` | 根据本地使用记录，处理取消 star 的项目、长期没用的项目，调整状态（主力、试用、归档） | 清理目录 |
+
+所有改动都会提交到这个仓库并推送。只有使用记录 `usage.jsonl` 例外，它只保存在本地，不进 git。
+
+### 日常使用流程
+
+1. 在 GitHub 上看到好项目，点 star。
+2. 干活时输入 `/starhub <任务>`。agent 会告诉你选了哪个项目、为什么，然后执行。不输入就完全不会触发。
+3. 用完 agent 会在本地记一笔：效果好、一般还是差。复盘时会用到。
+
+### 维护流程（约每半个月一次）
+
+1. 输入 `/starhub 维护`。
+2. agent 同步新 star 并分拣，然后给出复盘报告，包括：
+   - 新项目；
+   - 已取消的 star；
+   - 上游更新（附 compare 链接）；
+   - 90 天没用过的项目。
+3. 你逐项决定：归档、升级、降级，或者不动。
+4. agent 重新生成目录，然后提交并推送。
 
 ## 工作原理
 
@@ -20,14 +46,17 @@ GitHub star 越积越多，等到真要用时，往往想不起有什么，也�
 - **重型项目单独放**：需要 CLI、MCP、Docker 或 GPU 的项目标为 `pc-home`（工程机器），用到时才安装。
 - **安全**：所有项目都固定到某个 commit。上游更新只会列出来，由你审阅后再 `starhub bump`。拉下来的 SKILL.md 一律当作数据，不当作指令。
 
-## 自动维护（可选）
+## 维护方式：手动或自动
 
-[`.github/workflows/maintain.yml`](.github/workflows/maintain.yml) 每月 1 日和 16 日运行，有改动时开 PR 给你审阅。
+两种方式可以并存。手动维护不需要任何配置，分拣由当前对话的模型完成，不需要 API key。
 
-- **不做任何配置**：只同步新 star、生成复盘报告，零成本。
-- **添加 secret `ANTHROPIC_API_KEY`**：额外用 Claude 草拟新项目的目录条目。默认用最便宜的 `claude-haiku-5-5`，分拣一个项目不到一分钱。设置仓库变量 `STARHUB_MODEL` 可以换模型。
-- **要让 Action 能开 PR**：在 Settings → Actions → General 里勾选 *Allow GitHub Actions to create and approve pull requests*。
-- **不想要自动维护**：在 Actions 页面 Disable 这个 workflow 即可，`/starhub 维护` 照样能用。
+| 方式 | 配置 | 效果 |
+|---|---|---|
+| **只手动**（推荐起步） | 在 GitHub 仓库的 **Actions → starhub maintenance → ⋯ → Disable workflow** 关掉自动维护。也可以直接删掉 `.github/workflows/maintain.yml` | 只有你输入 `/starhub 维护` 时才会维护 |
+| 自动、免费 | 保持 workflow 开启，并在 **Settings → Actions → General** 勾选 *Allow GitHub Actions to create and approve pull requests* | 每月 1 日和 16 日自动同步新 star，有改动时开 PR，PR 正文就是复盘报告 |
+| 自动 + AI 分拣 | 在上一行的基础上，到 **Settings → Secrets and variables → Actions** 添加 secret `ANTHROPIC_API_KEY` | 额外用 Claude 草拟新项目的条目。默认用最便宜的 `claude-haiku-5-5`，分拣一个项目不到一分钱。添加仓库变量 `STARHUB_MODEL` 可以换模型 |
+
+自动维护只会开 PR，**从不自动升级任何项目的版本**。AI 草拟的条目会标上「AI 草拟」，下次 `/starhub 维护` 时复核。Action 里没有你的本地使用记录，所以不做闲置复盘，这部分只在本地 `/starhub 复盘` 时进行。
 
 ## 自己用一份
 

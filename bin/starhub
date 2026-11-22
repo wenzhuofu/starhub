@@ -345,6 +345,11 @@ def cmd_review(_args):
     out += ["", f"## 上游有更新（{len(rows)}）", "审阅 compare 链接后再 `starhub bump <repo>`；不会自动升级。"]
     out += [f"- {r}" for r in rows] or ["- 无"]
 
+    if not (ROOT / "usage.jsonl").exists():
+        out += ["", "## 使用复盘", "- 本机没有使用记录（usage.jsonl 只保存在本地，不进 git），"
+                "在本地运行 `/starhub 复盘` 时查看"]
+        print("\n".join(out))
+        return
     last, count = usage_by_repo()
     cutoff = (datetime.date.today() - datetime.timedelta(days=90)).isoformat()
     idle = [p for p in ps if p.get("status") in ("trial", "active")
