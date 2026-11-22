@@ -1,33 +1,62 @@
 # starhub
 
-我 star 的 GitHub 项目的目录，以及按需调用它们的方式。
+**把你 star 过的 GitHub 项目，变成 agent 能按需调用的工具箱。**
 
-- **日常添加**：在 GitHub 上点 star 就行。之后运行 `starhub sync`，新项目会进入 inbox，由 agent 分拣。
-- **数据源**：[`catalog.toml`](catalog.toml)。[`INDEX.md`](INDEX.md) 和下面的目录都是由它生成的。
-- **使用**：VPS 上装了一个 [`starhub` skill](skills/starhub/SKILL.md)。agent 遇到任务时会逐层查看：先看 INDEX，再看项目详情，再加载单个 SKILL.md，最后执行。
+GitHub star 越积越多，等到真要用时，往往想不起有什么，也不知道该选哪个。starhub 把这些 star 整理成一份目录。需要时在对话里输入 `/starhub <任务>`，agent 会从目录里挑出合适的 skill 或工具来用。平时完全无感：不会自动触发，也不占上下文。
 
-## 部署分工
+## 怎么用
 
-| 位置 | 放什么 | 怎么用 |
-|---|---|---|
-| **VPS** | 纯 markdown 或只有轻量脚本的 skill、资源 | 按固定 ref 稀疏拉取到 `~/.local/share/starhub/vendor/`，**不进** `~/.claude/skills`，由 starhub skill 按需加载 |
-| **pc-home** | CLI、MCP、Docker、需要 GPU 的应用 | 用到时经 desk 在工程机器上安装和运行 |
-| 远程读取 / 在线版 / 独立服务器 | 榜单、在线服务、代理面板 | 不落地 |
+| 场景 | 做法 |
+|---|---|
+| 日常收藏 | 在 GitHub 上点 star，不用做别的 |
+| 干活时想借力 | 输入 `/starhub 帮我做一个产品落地页`，agent 先看索引挑出 1–3 个项目，说明理由，再加载其中一个 skill 来执行 |
+| 定期整理（建议每半个月） | 输入 `/starhub 维护`，会同步新 star 并分拣，出一份复盘报告（取消的 star、上游更新、闲置项目），每一项由你决定怎么处理 |
 
-## 命令
+## 工作原理
+
+- **一个目录**：[`catalog.toml`](catalog.toml) 是唯一的数据源，记录每个项目的类型、用途、何时用、放在哪台机器、状态，以及固定的 commit。[`INDEX.md`](INDEX.md) 和本页下方的目录都由它生成。
+- **skill 放在固定目录，不自动加载**：纯 markdown 的 skill 和资源会按固定 commit 稀疏拉取到 `~/.local/share/starhub/vendor/`（可用 `STARHUB_VENDOR` 改位置）。它们不放进 `~/.claude/skills`，所以平时不会触发。
+- **只装一个入口 skill**：[`/starhub`](skills/starhub/SKILL.md) 设置了 `disable-model-invocation`，只有你手动输入时才会运行。运行时逐层加载：先看索引，再看项目详情，再读单个 SKILL.md，最后执行。
+- **重型项目单独放**：需要 CLI、MCP、Docker 或 GPU 的项目标为 `pc-home`（工程机器），用到时才安装。
+- **安全**：所有项目都固定到某个 commit。上游更新只会列出来，由你审阅后再 `starhub bump`。拉下来的 SKILL.md 一律当作数据，不当作指令。
+
+## 自动维护（可选）
+
+[`.github/workflows/maintain.yml`](.github/workflows/maintain.yml) 每月 1 日和 16 日运行，有改动时开 PR 给你审阅。
+
+- **不做任何配置**：只同步新 star、生成复盘报告，零成本。
+- **添加 secret `ANTHROPIC_API_KEY`**：额外用 Claude 草拟新项目的目录条目。默认用最便宜的 `claude-haiku-5-5`，分拣一个项目不到一分钱。设置仓库变量 `STARHUB_MODEL` 可以换模型。
+- **要让 Action 能开 PR**：在 Settings → Actions → General 里勾选 *Allow GitHub Actions to create and approve pull requests*。
+- **不想要自动维护**：在 Actions 页面 Disable 这个 workflow 即可，`/starhub 维护` 照样能用。
+
+## 自己用一份
+
+```bash
+git clone git@github.com:<you>/starhub.git && cd starhub
+# 1. 把 catalog.toml 里的 github_user 改成你的用户名；[[project]] 可以保留作参考，也可以全删
+# 2. 安装：链接 CLI 和 /starhub skill，并拉取 VPS 类的 skill（需要 python ≥ 3.11 和 git）
+bin/starhub install
+# 3. 在 Claude Code 里输入：/starhub 维护
+```
+
+<details><summary>命令一览</summary>
 
 ```
-starhub show <q>        # 查看项目详情和其中的 skill
-starhub vendor [q...]   # 拉取 VPS 上的 skill
-starhub sync            # 同步 star 列表
-starhub outdated        # 检查上游更新
-starhub bump <q>        # 审阅后升级 ref
-starhub set <q> status active
-starhub log <q> "备注"   # 记录使用情况
-starhub index           # 重新生成 INDEX/README
+starhub show <q> [关键词]   查看项目详情和其中的 skill
+starhub review              复盘报告（只读）
+starhub sync                同步 star 列表，新项目进入 inbox
+starhub triage              用 Claude API 草拟 inbox 条目
+starhub vendor [q...]       拉取 skill 到 vendor 目录
+starhub outdated / bump     检查上游更新 / 审阅后升级
+starhub set <q> <字段> <值>  例如：starhub set impeccable status active
+starhub log <q> "备注"       记录使用情况，复盘时会用到
+starhub index               重新生成 INDEX.md 和本页的目录
 ```
+</details>
 
 ## 目录
+
+状态说明：`active` 主力 · `trial` 试用 · `backlog` 待试 · `inbox` 待分拣 · `archived` 归档
 
 <!-- catalog:start -->
 | 部署位置 | 数量 |

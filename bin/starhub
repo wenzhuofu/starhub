@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """starhub — 管理 GitHub star 项目的目录与 VPS 上的 skill 库（仅用标准库）。
 
-  starhub index                 由 catalog.toml 生成 INDEX.md 与 README 目录
-  starhub show <q>              查看项目详情；已拉取的列出其中每个 skill（L1）
-  starhub vendor [q...]         把 host=vps 的项目按固定 ref 稀疏拉取到 vendor 库
-  starhub sync                  对比 GitHub star 列表：新 star 追加为 inbox，报告已取消的
+  starhub install               首次安装：链接 CLI 与 /starhub skill，拉取 VPS 上的 skill
+  starhub show <q> [关键词]     查看项目详情；已拉取的列出其中每个 skill
+  starhub review                复盘报告（只读）：待分拣、已取消 star、上游更新、闲置项目
+  starhub sync                  对比 GitHub star 列表：新 star 追加为 inbox
+  starhub triage                用 Claude API 草拟 inbox 条目（默认 claude-haiku-5-5，STARHUB_MODEL 可改）
+  starhub vendor [q...]         按固定 ref 稀疏拉取 host=vps 的项目到 vendor 库
   starhub outdated              列出上游已有新提交的项目
   starhub bump <q> [sha]        把 ref 升到上游 HEAD（或指定 sha），并重新拉取
   starhub set <q> <字段> <值>   修改某个字段，如 status active
   starhub log <q> <备注>        记录一次使用到 usage.jsonl
+  starhub index                 由 catalog.toml 生成 INDEX.md 与 README 目录
 """
 import datetime
 import json
@@ -245,43 +248,226 @@ def github_stars(user):
         page += 1
 
 
-def cmd_sync(_args):
-    data = load()
-    known = {p["repo"].lower() for p in projects(data)}
+def today():
+    return datetime.date.today().isoformat()
+
+
+def star_diff(data):
     stars = github_stars(data["meta"]["github_user"])
+    known = {p["repo"].lower() for p in projects(data)}
     starred = {s["full_name"].lower() for s in stars}
     new = [s for s in stars if s["full_name"].lower() not in known]
     gone = [p["repo"] for p in projects(data)
             if p["repo"].lower() not in starred and p.get("status") != "archived"]
+    return stars, new, gone
+
+
+def cmd_sync(_args):
+    data = load()
+    stars, new, gone = star_diff(data)
     if new:
         with open(CATALOG, "a", encoding="utf-8") as f:
             for s in new:
                 f.write("\n[[project]]\n"
                         f"repo = {json.dumps(s['full_name'])}\n"
+                        f'added = "{today()}"\n'
                         'type = "?"\ncategory = "?"\nhost = "?"\nstatus = "inbox"\n'
                         f"summary = {json.dumps(s.get('description') or '', ensure_ascii=False)}\n"
                         'when = ""\n'
                         f"notes = {json.dumps('语言 %s · ★%s · 待分拣' % (s.get('language') or '-', s.get('stargazers_count')), ensure_ascii=False)}\n")
-    print(f"GitHub star {len(stars)} 个；目录 {len(known)} 个")
+    print(f"GitHub star {len(stars)} 个；目录 {len(projects(data))} 个")
     print(f"新增 {len(new)} 个（已追加为 inbox）：" + ", ".join(s["full_name"] for s in new) if new else "无新增")
     if gone:
         print("已取消 star 但未归档：" + ", ".join(gone) + "\n  → starhub set <repo> status archived")
     if new:
-        print("下一步：逐个读 README 补全 type/category/host/when/skills/ref，再运行 starhub index")
+        print("下一步：starhub triage（或由 agent 读 README 分拣），再 starhub index")
+
+
+def remote_head(repo):
+    try:
+        return git("ls-remote", f"https://github.com/{repo}.git", "HEAD").split()[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return None
+
+
+def outdated(data=None):
+    rows = []
+    for p in projects(data):
+        if not p.get("ref") or p.get("status") == "archived":
+            continue
+        head = remote_head(p["repo"])
+        if head is None:
+            rows.append(f"? {p['repo']}: 无法访问（仓库可能被删除或改名）")
+        elif head != p["ref"]:
+            rows.append(f"↑ {p['repo']}: {p['ref'][:7]} → {head[:7]}  "
+                        f"https://github.com/{p['repo']}/compare/{p['ref'][:12]}...{head[:12]}")
+    return rows
 
 
 def cmd_outdated(_args):
-    for p in projects():
-        if not p.get("ref") or p.get("status") == "archived":
-            continue
+    print("\n".join(outdated()) or "全部是最新")
+
+
+def usage_by_repo():
+    last, count = {}, {}
+    f = ROOT / "usage.jsonl"
+    if f.exists():
+        for line in f.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = json.loads(line)
+                count[r["repo"]] = count.get(r["repo"], 0) + 1
+                last[r["repo"]] = max(last.get(r["repo"], ""), r["date"])
+    return last, count
+
+
+def cmd_review(_args):
+    """只读复盘报告，Markdown 输出（供人看、也作为自动维护 PR 的正文）。"""
+    data = load()
+    ps = projects(data)
+    out = [f"# starhub 复盘 {today()}", ""]
+
+    pending = [p for p in ps if p.get("status") == "inbox" or "AI 草拟" in p.get("notes", "")]
+    out.append(f"## 待确认的新项目（{len(pending)}）")
+    out += [f"- `{p['repo']}` [{p.get('type')}·{p.get('host')}·{p.get('status')}] {p.get('summary','')}"
+            for p in pending] or ["- 无"]
+
+    try:
+        _, new, gone = star_diff(data)
+        if new:
+            out.append(f"- 另有 {len(new)} 个新 star 尚未同步：" + ", ".join(s["full_name"] for s in new)
+                       + " → `starhub sync`")
+        out += ["", f"## 已取消 star（{len(gone)}）"]
+        out += [f"- `{r}` → `starhub set {r} status archived`" for r in gone] or ["- 无"]
+    except OSError as e:
+        out += ["", f"## 已取消 star\n- 无法访问 GitHub API：{e}"]
+
+    rows = outdated(data)
+    out += ["", f"## 上游有更新（{len(rows)}）", "审阅 compare 链接后再 `starhub bump <repo>`；不会自动升级。"]
+    out += [f"- {r}" for r in rows] or ["- 无"]
+
+    last, count = usage_by_repo()
+    cutoff = (datetime.date.today() - datetime.timedelta(days=90)).isoformat()
+    idle = [p for p in ps if p.get("status") in ("trial", "active")
+            and p.get("added", "9999") < cutoff and last.get(p["repo"], "") < cutoff]
+    out += ["", f"## 90 天未使用的 trial/active（{len(idle)}）"]
+    out += [f"- `{p['repo']}`（最近使用：{last.get(p['repo'], '从未')}）→ 降为 backlog 或归档？" for p in idle] or ["- 无"]
+    used = sorted(count.items(), key=lambda x: -x[1])[:10]
+    out += ["", "## 使用最多"]
+    out += [f"- `{r}` × {n}（最近 {last[r]}）" for r, n in used] or ["- 暂无使用记录"]
+    print("\n".join(out))
+
+
+TRIAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "description": "skill | tool | app | model | resource，可用 + 组合"},
+        "category": {"type": "string"},
+        "host": {"type": "string", "enum": ["vps", "pc-home", "remote", "hosted", "server", "none"]},
+        "summary": {"type": "string", "description": "中文，一句话说清它是什么、能做什么"},
+        "when": {"type": "string", "description": "中文，什么任务时该用它"},
+        "skills": {"type": "array", "items": {"type": "string"},
+                   "description": "面向用户的 skill 目录（相对仓库根），不含 .claude/.agents 等内部开发 skill"},
+        "setup": {"type": "string", "description": "pc-home 上的安装命令，非 pc-home 留空"},
+        "needs": {"type": "string"},
+        "conflicts": {"type": "array", "items": {"type": "string"}, "description": "目录中功能重叠的 repo"},
+        "notes": {"type": "string", "description": "注意事项：风险、易错点；没有就留空"},
+    },
+    "required": ["type", "category", "host", "summary", "when", "skills", "setup", "needs",
+                 "conflicts", "notes"],
+    "additionalProperties": False,
+}
+
+
+def http_get(url, accept="application/vnd.github+json"):
+    req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "starhub"})
+    if os.environ.get("GITHUB_TOKEN") and "api.github.com" in url:
+        req.add_header("Authorization", f"Bearer {os.environ['GITHUB_TOKEN']}")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
+def cmd_triage(_args):
+    try:
+        import anthropic
+    except ImportError:
+        sys.exit("需要 Anthropic SDK：pip install anthropic（以及 ANTHROPIC_API_KEY）")
+    model = os.environ.get("STARHUB_MODEL", "claude-haiku-5-5")
+    data = load()
+    inbox = [p for p in projects(data) if p.get("status") == "inbox"]
+    if not inbox:
+        print("没有 inbox 项目")
+        return
+    client = anthropic.Anthropic()
+    cats = data["meta"]["categories"]
+    existing = "\n".join(f"- {p['repo']}: {p.get('summary','')}" for p in projects(data)
+                         if p.get("status") != "inbox")
+    system = (
+        "你在为一个 GitHub star 目录分拣新项目，输出一条 JSON 目录条目。\n"
+        f"category 从这些里选（键名）：{json.dumps(cats, ensure_ascii=False)}；都不合适就新起一个英文短键。\n"
+        "host 规则：纯 markdown 或只带轻量脚本的 agent skill、资料合集 → vps；需要安装 CLI、MCP server、"
+        "Docker、GPU 或长期运行服务的 → pc-home；只需在线阅读的榜单 → remote；有官方在线版的重型应用 → hosted；"
+        "需独立服务器部署的服务端 → server。\n"
+        "summary、when、notes 用简洁中文。只依据提供的 README 和文件列表，不确定的写进 notes。\n"
+        f"目录中已有项目（用于判断 conflicts）：\n{existing}")
+    for p in inbox:
+        repo = p["repo"]
         try:
-            head = git("ls-remote", f"https://github.com/{p['repo']}.git", "HEAD").split()[0]
-        except (subprocess.CalledProcessError, IndexError):
-            print(f"? {p['repo']}: 无法访问")
+            readme = http_get(f"https://api.github.com/repos/{repo}/readme", "application/vnd.github.raw")
+            tree = json.loads(http_get(f"https://api.github.com/repos/{repo}/git/trees/HEAD?recursive=1"))
+            paths = [t["path"] for t in tree.get("tree", []) if t["type"] == "blob"]
+        except OSError as e:
+            print(f"✗ {repo}: 读取失败 {e}")
             continue
-        if head != p["ref"]:
-            print(f"↑ {p['repo']}: {p['ref'][:7]} → {head[:7]}  "
-                  f"https://github.com/{p['repo']}/compare/{p['ref'][:12]}...{head[:12]}")
+        notable = [x for x in paths if x.endswith("SKILL.md") or x in (
+            "package.json", "pyproject.toml", "Cargo.toml", "go.mod", "Dockerfile", "docker-compose.yml",
+            ".claude-plugin/marketplace.json", ".mcp.json")]
+        user = (f"仓库：{repo}\nGitHub 描述：{p.get('summary','')}\n"
+                f"关键文件（共 {len(paths)} 个文件）：\n" + "\n".join(notable[:300]) +
+                f"\n\nREADME：\n{readme}")
+        try:
+            resp = client.messages.create(
+                model=model, max_tokens=4000,
+                output_config={"effort": "low",
+                               "format": {"type": "json_schema", "schema": TRIAGE_SCHEMA}},
+                system=system, messages=[{"role": "user", "content": user}])
+        except anthropic.RateLimitError:
+            print(f"✗ {repo}: 触发限流，稍后重试")
+            continue
+        except anthropic.APIStatusError as e:
+            print(f"✗ {repo}: API 错误 {e.status_code} {e.message}")
+            continue
+        except anthropic.APIConnectionError:
+            print(f"✗ {repo}: 网络错误")
+            continue
+        if resp.stop_reason != "end_turn":
+            print(f"✗ {repo}: 未完成（stop_reason={resp.stop_reason}），留在 inbox")
+            continue
+        entry = json.loads(next(b.text for b in resp.content if b.type == "text"))
+        entry["notes"] = (entry.get("notes", "") + f"（AI 草拟 · {model}，待确认）").strip()
+        head = remote_head(repo)
+        for k in ("type", "category", "host", "summary", "when", "skills", "setup", "needs",
+                  "conflicts", "notes"):
+            if entry.get(k):
+                set_field(repo, k, entry[k])
+        if head:
+            set_field(repo, "ref", head)
+        set_field(repo, "status", "backlog")
+        print(f"✓ {repo} → {entry['category']} · {entry['host']} · {entry['summary'][:60]}")
+
+
+def cmd_install(_args):
+    bin_link = Path.home() / ".local/bin/starhub"
+    skill_link = Path.home() / ".claude/skills/starhub"
+    for link, target in ((bin_link, ROOT / "bin/starhub"), (skill_link, ROOT / "skills/starhub")):
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.is_symlink() or not link.exists():
+            link.unlink(missing_ok=True)
+            link.symlink_to(target)
+            print(f"✓ {link} → {target}")
+        else:
+            print(f"跳过 {link}：已存在且不是链接")
+    cmd_vendor([])
+    print("\n完成。对话里输入 /starhub <任务> 使用，/starhub 维护 做复盘。")
 
 
 def set_field(repo, field, value):
@@ -324,14 +510,15 @@ def cmd_log(args):
     if len(args) < 2:
         sys.exit("用法：starhub log <q> <备注>")
     p = find(args[0])
-    rec = {"date": datetime.date.today().isoformat(), "repo": p["repo"], "note": " ".join(args[1:])}
+    rec = {"date": today(), "repo": p["repo"], "note": " ".join(args[1:])}
     with open(ROOT / "usage.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print("已记录：", rec)
 
 
-COMMANDS = {"index": cmd_index, "show": cmd_show, "vendor": cmd_vendor, "sync": cmd_sync,
-            "outdated": cmd_outdated, "bump": cmd_bump, "set": cmd_set, "log": cmd_log}
+COMMANDS = {"install": cmd_install, "index": cmd_index, "show": cmd_show, "review": cmd_review,
+            "sync": cmd_sync, "triage": cmd_triage, "vendor": cmd_vendor, "outdated": cmd_outdated,
+            "bump": cmd_bump, "set": cmd_set, "log": cmd_log}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:

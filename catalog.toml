@@ -33,6 +33,7 @@ ops = "网络与运维"
 
 [[project]]
 repo = "pbakaus/impeccable"
+added = "2026-11-22"
 type = "skill"
 category = "design"
 host = "vps"
@@ -47,6 +48,7 @@ notes = "新设计开始时会向 impeccable.style 拉取视觉方向（联网�
 
 [[project]]
 repo = "Nutlope/hallmark"
+added = "2026-11-22"
 type = "skill"
 category = "design"
 host = "vps"
@@ -60,6 +62,7 @@ ref = "04977e15f3dfd6ee4b74c887dac3eb52665d6c92"
 
 [[project]]
 repo = "emilkowalski/skills"
+added = "2026-11-22"
 type = "skill"
 category = "design"
 host = "vps"
@@ -71,6 +74,7 @@ ref = "64eb3deb9a5fbfa041faf783e0bc3fd635872e9c"
 
 [[project]]
 repo = "VoltAgent/awesome-design-md"
+added = "2026-11-22"
 type = "resource"
 category = "design"
 host = "vps"
@@ -84,6 +88,7 @@ ref = "fcc70284932276d085f01ef9f83edde90b1258cb"
 
 [[project]]
 repo = "tt-a1i/archify"
+added = "2026-11-22"
 type = "skill"
 category = "diagram"
 host = "vps"
@@ -97,6 +102,7 @@ ref = "8509a3d63e763b4d454ea9aafa1f939545fcb1ea"
 
 [[project]]
 repo = "cathrynlavery/diagram-design"
+added = "2026-11-22"
 type = "skill"
 category = "diagram"
 host = "vps"
@@ -112,6 +118,7 @@ ref = "d7b0176d7e60c6f2ff54067991491ac7622c81fb"
 
 [[project]]
 repo = "colbymchenry/codegraph"
+added = "2026-11-22"
 type = "tool"
 category = "code-intel"
 host = "pc-home"
@@ -125,6 +132,7 @@ notes = "同一项目只允许一个 MCP 写入者；不要在 Windows 与 WSL �
 
 [[project]]
 repo = "Graphify-Labs/graphify"
+added = "2026-11-22"
 type = "tool+skill"
 category = "code-intel"
 host = "pc-home"
@@ -138,6 +146,7 @@ notes = "PyPI 包名是 graphifyy（两个 y）；纯代码可离线，混合语
 
 [[project]]
 repo = "Egonex-AI/Understand-Anything"
+added = "2026-11-22"
 type = "skill+tool"
 category = "code-intel"
 host = "pc-home"
@@ -154,6 +163,7 @@ notes = "skill 部分是纯分析，也可在 VPS 上对本地代码使用；das
 
 [[project]]
 repo = "headroomlabs-ai/headroom"
+added = "2026-11-22"
 type = "tool"
 category = "agent-efficiency"
 host = "pc-home"
@@ -167,6 +177,7 @@ notes = "自带 skill 是“给应用接入 headroom”的开发指南"
 
 [[project]]
 repo = "DietrichGebert/ponytail"
+added = "2026-11-22"
 type = "skill"
 category = "agent-efficiency"
 host = "vps"
@@ -180,6 +191,7 @@ ref = "ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10"
 
 [[project]]
 repo = "virgiliojr94/book-to-skill"
+added = "2026-11-22"
 type = "skill+tool"
 category = "knowledge"
 host = "vps"
@@ -194,6 +206,7 @@ notes = "生成的 skill 建议放进 starhub 的 local/ 目录统一管理"
 
 [[project]]
 repo = "stablyai/orca"
+added = "2026-11-22"
 type = "app"
 category = "agent-infra"
 host = "vps"
@@ -206,6 +219,7 @@ notes = "自带 orca-cli、orchestration 等 skill，随应用提供"
 
 [[project]]
 repo = "pingdotgg/t3code"
+added = "2026-11-22"
 type = "app"
 category = "agent-infra"
 host = "none"
@@ -218,6 +232,7 @@ notes = "与 orca 定位重叠，二选一"
 
 [[project]]
 repo = "HKUDS/CLI-Anything"
+added = "2026-11-22"
 type = "tool+skill"
 category = "agent-infra"
 host = "pc-home"
@@ -230,6 +245,7 @@ notes = "目标软件本身也必须装在 pc-home"
 
 [[project]]
 repo = "Panniantong/Agent-Reach"
+added = "2026-11-22"
 type = "tool+skill"
 category = "agent-infra"
 host = "pc-home"
@@ -242,6 +258,7 @@ notes = "PyPI 上同名 agent-reach 包不是本项目，勿装；如需 VPS 上
 
 [[project]]
 repo = "router-for-me/CLIProxyAPI"
+added = "2026-11-22"
 type = "tool"
 category = "agent-infra"
 host = "server"
@@ -255,6 +272,7 @@ notes = "可能违反各家订阅服务条款，有封号风险，谨慎使用"
 
 [[project]]
 repo = "sansan0/TrendRadar"
+added = "2026-11-22"
 type = "app"
 category = "intel"
 host = "pc-home"
@@ -266,6 +284,7 @@ ref = "ad2221fae0d908f6c11f40f70680dd5f9b41cd5d"
 
 [[project]]
 repo = "koala73/worldmonitor"
+added = "2026-11-22"
 type = "app"
 category = "intel"
 host = "hosted"
@@ -277,6 +296,7 @@ ref = "c140eab2b93d1272300de5e02de930350d053702"
 
 [[project]]
 repo = "bilawalsidhu/gods-eye-view"
+added = "2026-11-22"
 type = "app"
 category = "intel"
 host = "hosted"
@@ -288,6 +308,7 @@ ref = "d9d79ebc4da7379a1359947d23543b72757221bb"
 
 [[project]]
 repo = "OpenGithubs/github-monthly-rank"
+added = "2026-11-22"
 type = "resource"
 category = "intel"
 host = "remote"
@@ -301,6 +322,7 @@ notes = "读取：https://raw.githubusercontent.com/OpenGithubs/github-monthly-r
 
 [[project]]
 repo = "heygen-com/hyperframes"
+added = "2026-11-22"
 type = "tool+skill"
 category = "media"
 host = "pc-home"
@@ -314,6 +336,7 @@ ref = "2d72e523ff3e82e2e840be0daa954480a0bcfe14"
 
 [[project]]
 repo = "debpalash/VoiceStudio"
+added = "2026-11-22"
 type = "app"
 category = "media"
 host = "pc-home"
@@ -328,6 +351,7 @@ ref = "d5dd3c3e529dbaa1720753d9e0e46940ab5175c2"
 
 [[project]]
 repo = "google-research/timesfm"
+added = "2026-11-22"
 type = "model+skill"
 category = "domain"
 host = "pc-home"
@@ -340,6 +364,7 @@ ref = "918df02c9d366b2145bc5876135fa2131d3ed2a6"
 
 [[project]]
 repo = "anthropics/financial-services"
+added = "2026-11-22"
 type = "skill"
 category = "domain"
 host = "vps"
@@ -354,6 +379,7 @@ ref = "3e32c2287dcb637c184c01cc0ad82d6af7e9bb0f"
 
 [[project]]
 repo = "morluto/rea"
+added = "2026-11-22"
 type = "tool+skill"
 category = "security"
 host = "pc-home"
@@ -367,6 +393,7 @@ ref = "26917581d63ba53345ef70fe02cdc14486b2888a"
 
 [[project]]
 repo = "MHSanaei/3x-ui"
+added = "2026-11-22"
 type = "app"
 category = "ops"
 host = "server"
