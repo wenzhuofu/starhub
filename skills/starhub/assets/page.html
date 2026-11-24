@@ -115,6 +115,7 @@ a { color: inherit; }
 
 /* knowledge layout */
 .shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); gap: 56px; padding-top: 32px; }
+.shell.solo { display: block; }
 .rail { position: sticky; top: calc(var(--bar-h) + 24px); align-self: start; max-height: calc(100dvh - var(--bar-h) - 48px); overflow: auto; padding-bottom: 24px; scrollbar-width: thin; }
 .rail h2 { margin: 0 0 8px; font-size: 0.8125rem; font-weight: 500; color: var(--ink-3); }
 .rail ol { list-style: none; margin: 0; padding: 0; }
@@ -575,7 +576,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     else if (state.v === 'a') html = viewAll();
     else {
       const inner = state.q.trim() ? viewSearch() : state.t ? viewTopic(state.t) : viewHome();
-      html = '<div class="shell">' + rail(state.t) + '<article class="page">' + inner + '</article></div>';
+      const nav = rail(state.t);
+      html = '<div class="shell' + (nav ? '' : ' solo') + '">' + nav + '<article class="page">' + inner + '</article></div>';
     }
     $('view').innerHTML = html;
     document.title = (state.v === 'k' && state.t && topics.get(state.t) ? topics.get(state.t).name + ' · ' : '') + 'starhub';
