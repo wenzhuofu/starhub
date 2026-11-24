@@ -227,7 +227,7 @@ tools: []
             "related":["旅行/上海"],"owner":"ai","coverage":"12/40","note":"<markdown 正文，去掉 frontmatter>"}],
  "items":[{"id":"…","source":"xhs","via":["收藏"],"url":"…","title":"干净标题","author":"…","folder":"…",
            "saved":"…","seen":"…","topic":"旅行/杭州","kind":"攻略","scene":"…","status":"ok"}],
- "tools":[{"id":"github:…","title":"owner/repo","url":"…","what":"…","when":"…","topic":"…",
+ "tools":[{"id":"github:…","source":"github","title":"owner/repo","url":"…","what":"…","when":"…","topic":"…",
            "type":"skill","level":"trial","conflicts":[],"saved":"…","seen":"…"}]}
 ```
 
