@@ -1,4 +1,3 @@
-import hashlib
 import json
 import sys
 from collections import defaultdict
@@ -86,7 +85,8 @@ def validate_label(entry, rows, topics):
 
 def label(args, state):
     rows = state[0]
-    topics = {topic["id"] for topic in tax.load()["topics"]} | {tax.PENDING}
+    topics = {topic["id"] for topic in tax.load()["topics"] if topic["id"] in state[1]} | {tax.PENDING}
+    previous = catalog.labels()
     accepted, rejected = [], []
     for number, entry in input_rows(read_file(args.file)):
         errors = validate_label(entry, rows, topics)
@@ -96,10 +96,16 @@ def label(args, state):
             continue
         fields = {name: entry[name].strip() if isinstance(entry[name], str) else entry[name]
                   for name in catalog.LABEL_FIELDS if name in entry}
-        accepted.append({"id": entry["id"], **fields, "by": "ai", "at": lib.today()})
+        key = entry["id"]
+        tool = {field: previous.get(key, {})[field] for field in ("what", "when", "tool")
+                if field in previous.get(key, {})}
+        record = {"id": key, **tool, **fields, "by": "ai", "at": lib.now("microseconds")}
+        accepted.append(record)
+        previous[key] = record
     if accepted:
-        path = lib.HOME / "labels.jsonl"
-        lib.put_rows(path, [*lib.jsonl(path), *accepted])
+        path = lib.state_path("labels.jsonl")
+        lib.append_text(path, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in accepted))
+    lib.wiki_log("label", f"归类 {len(accepted)} 条，拒收 {len(rejected)} 条")
     print(f"已归类 {len(accepted)} 条，拒收 {len(rejected)} 条")
     for message in rejected:
         print(message)
@@ -112,6 +118,7 @@ def taxonomy(args, state=None):
     if args.action == "apply":
         data = tax.validate(json.loads(read_file(args.file)))
         tax.save(data)
+        lib.wiki_log("taxonomy apply", f"保存 {len(data['topics'])} 个主题")
         print(f"已保存 {len(data['topics'])} 个主题")
     elif args.action == "add":
         key = tax.add(args.id, args.parent)
@@ -130,54 +137,53 @@ def taxonomy(args, state=None):
 def classify(args, state):
     data = tax.load()
     print("# 词表")
-    print("主题：" + "、".join([tax.PENDING, *(topic["id"] for topic in data["topics"])]))
+    names = [topic for topic in data["topics"] if topic["id"] in state[1]]
+    shown = [key if key.rsplit("/", 1)[-1] == state[1][key]["name"] else f"{key}（{state[1][key]['name']}）"
+             for key in (topic["id"] for topic in names)]
+    print("主题：" + "、".join([tax.PENDING, *shown]))
     print("类型：" + "、".join(tax.KINDS))
     print("实体类型：" + "、".join(tax.ENTITY_TYPES))
-    rows = (row for row in state[0].values() if row["status"] == "new" and lib.visible(row)
+    rows = (row for row in state[0].values() if (row["status"] == "new" or args.pending and row["topic"] == tax.PENDING)
+            and lib.visible(row)
             and (not args.source or row["source"] == args.source))
-    newest = sorted(rows, key=lambda row: (row["saved"], row["seen"], row["id"]), reverse=True)
+    newest = sorted(rows, key=lambda row: (row.get("needs_relabel", False), row["saved"], row["seen"], row["id"]),
+                    reverse=True)
+    lib.wiki_log("classify", f"本批 {min(len(newest), args.limit)} 条，待归类 {len(newest)} 条")
     print(f"\n# 待归类（{len(newest)}）")
     for row in newest[:args.limit]:
         print(queries.l0(row))
-
-
-def members(rows, topic):
-    return [row for row in rows.values() if row["topic"] == topic and row["source"] != "github" and lib.visible(row)]
-
-
-def snapshot(rows):
-    fields = ("clean_title", "source", "kind", "scene", "entities", "saved", "url", "excerpt")
-    return {row["id"]: hashlib.sha256(json.dumps([row[key] for key in fields], ensure_ascii=False).encode()).hexdigest()
-            for row in rows}
 
 
 def compile_topic(args, state):
     rows, topics, wiki, _, _ = state
     if args.id and args.id not in topics:
         raise lib.Error(f"找不到主题：{args.id}")
-    groups = defaultdict(list)
-    for row in rows.values():
-        if row["source"] != "github" and lib.visible(row):
-            groups[row["topic"]].append(row)
+    groups = notes.member_groups(rows)
     dirty = []
     for key in ([args.id] if args.id else sorted(topics)):
         group = groups[key]
-        previous = wiki.get(key, {}).get("snapshot", {})
-        current = snapshot(group)
+        note = wiki.get(key, {})
+        if note.get("owner") == "user":
+            continue
+        previous = note.get("snapshot", {}) if note.get("file") else {}
+        current = notes.snapshot(group)
         is_pending = key == tax.PENDING or key.startswith(tax.PENDING + "/")
         if (args.id or not is_pending) and previous != current:
             dirty.append((key, group, previous, current))
     if not dirty:
+        lib.wiki_log("compile", "0 个主题待编译")
         print("没有待编译的主题。")
         return
     key, group, previous, current = dirty[0]
     changed = [row for row in group if previous.get(row["id"]) != current[row["id"]]]
     gone = sorted(previous.keys() - current.keys())
+    lib.wiki_log("compile", f"{key}（新增或更新 {len(changed)} 条，移出 {len(gone)} 条）")
     print(f"# {key} · 新增或更新 {len(changed)} 条，移出 {len(gone)} 条")
     if len(dirty) > 1:
         print(f"另有 {len(dirty) - 1} 个主题待编译")
-    if key in wiki:
-        print("\n## 现有笔记\n" + wiki[key]["body"][:queries.NOTE_LIMIT].rstrip())
+    body = wiki.get(key, {}).get("body", "")
+    if body:
+        print("\n## 现有笔记\n" + body[:queries.NOTE_LIMIT].rstrip())
 
     end = args.offset + args.limit
     if gone[args.offset:end]:
@@ -198,13 +204,20 @@ def compile_topic(args, state):
 
 
 def note(args, state):
-    rows, topics, wiki, _, _ = state
+    rows, topics, _, _, _ = state
     if args.id not in topics:
         raise lib.Error(f"找不到主题：{args.id}")
     fields, body, errors = notes.validate(read_file(args.file), args.id, topics)
+    existing = notes.load(lib.curation()).get(args.id, {})
+    if existing.get("owner") == "user":
+        print(f"拒收：{args.id} 由用户维护。确认交还后请运行 starhub release {args.id}。")
+        views.rebuild()
+        return 1
     if errors:
         for message in errors:
             print("拒收：" + message)
         return 1
-    notes.save(args.id, fields, body, snapshot(members(rows, args.id)), wiki.get(args.id, {}).get("file"))
+    snapshot = notes.snapshot(notes.member_groups(rows)[args.id])
+    notes.save(args.id, fields, body, snapshot)
+    lib.wiki_log("note", f"{args.id}（{fields['sources']} 条出处）")
     print(f"已保存主题笔记：{args.id}")

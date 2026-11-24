@@ -16,7 +16,7 @@ def fetched(source, cfg, known, rows, synced, full):
             history.pop("tabs", None)
         yield from OpenCLI(source).xhs_saved(known_action, history, full)
     else:
-        yield from OpenCLI(source).bili_saved(known, source not in synced, full)
+        yield from OpenCLI(source).bili_saved(known, source not in synced, full, cfg.setdefault("bili_history", {}))
 
 
 def merge_batch(rows, source, by_id, batch, full):
@@ -57,6 +57,7 @@ def merge_batch(rows, source, by_id, batch, full):
             if not item["removed"]:
                 item["removed"] = date
                 print(f"已下架 {item['id']}")
+    return added
 
 
 def print_pending(rows):
@@ -71,6 +72,7 @@ def sync(args):
     synced = set(cfg.get("synced_sources", ()))
     rows = lib.raw_items()
     succeeded, updated = False, False
+    reports = []
     for source in selected:
         by_id = {(key.casefold() if source == "github" else key): key
                  for key, row in rows.items() if row["source"] == source}
@@ -79,13 +81,15 @@ def sync(args):
             batch.extend(fetched(source, cfg, by_id.__contains__, rows, synced, args.full))
         except SOURCE_ERRORS as exc:
             print(f"{lib.LABELS[source]:8} " + source_error(source, exc).removeprefix(lib.LABELS[source]))
-            if source != "xhs" or not batch:
+            if source == "github" or not batch:
+                reports.append(f"{lib.LABELS[source]} 失败")
                 continue
             complete = False
         if complete:
             succeeded = True
             synced.add(source)
-        merge_batch(rows, source, by_id, batch, args.full and complete)
+        count = merge_batch(rows, source, by_id, batch, args.full and complete)
+        reports.append(f"{lib.LABELS[source]} 新增 {count}" + ("" if complete else "（保留断点）"))
         lib.put_raw(rows, [source])
         updated = True
     if updated:
@@ -93,5 +97,6 @@ def sync(args):
             cfg.update(last_sync=lib.now(), synced_sources=sorted(synced))
         lib.put_config(cfg)
         rebuild()
+    lib.wiki_log("sync", "，".join(reports) or "0 个来源")
     print_pending(catalog.state()[0])
     return int(not succeeded)

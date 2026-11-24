@@ -1,4 +1,5 @@
 import json
+import re
 
 import library as lib
 
@@ -9,23 +10,25 @@ DEFAULT = {"topics": [], "kinds": list(KINDS), "synonyms": {}}
 
 
 def load():
-    path = lib.HOME / "taxonomy.json"
+    path = lib.state_path("taxonomy.json")
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else DEFAULT
 
 
 def save(data):
-    lib.write("taxonomy.json", json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    lib.write(lib.state_path("taxonomy.json"), json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def valid_name(value):
     return (isinstance(value, str) and bool(value) and value == value.strip()
-            and not any(char in value for char in "/\\\r\n\t[],") and value not in (".", ".."))
+            and not re.search(r'[/\\<>:"|?*#\[\],\x00-\x1f]', value)
+            and not value.endswith(".")
+            and not re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", value))
 
 
 def validate(data):
     if not isinstance(data, dict) or not isinstance(data.get("topics"), list):
         raise lib.Error("词表须包含 topics 列表")
-    topics = {}
+    topics, paths = {}, set()
     for number, topic in enumerate(data["topics"], 1):
         if not isinstance(topic, dict) or not isinstance(topic.get("id"), str):
             raise lib.Error(f"第 {number} 个主题缺少 id")
@@ -33,8 +36,9 @@ def validate(data):
         segments = key.split("/")
         if not 1 <= len(segments) <= 3 or not all(map(valid_name, segments)):
             raise lib.Error(f"主题路径有误：{key}（最多三层）")
-        if key in topics or segments[0] == PENDING:
+        if key.casefold() in paths or segments[0].casefold() in (PENDING, "index", "log", "insights"):
             raise lib.Error(f"主题重复或使用了保留路径：{key}")
+        paths.add(key.casefold())
         parent = key.rpartition("/")[0]
         name = topic.get("name", segments[-1])
         if topic.get("parent", "") != parent or not valid_name(name):

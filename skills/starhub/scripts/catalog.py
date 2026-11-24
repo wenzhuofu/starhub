@@ -1,4 +1,3 @@
-import datetime as dt
 import re
 from collections import defaultdict
 
@@ -6,17 +5,28 @@ import library as lib
 import notes
 import taxonomy as tax
 
-CLICKBAIT = re.compile(r"绝了|必看|建议收藏|干货|保姆级|天花板|yyds|码住|一定要看", re.I)
+CLICKBAIT = re.compile(r"建议收藏|一定要看|保姆级|天花板|谁懂啊|一整个|家人们|绝了|必看|干货|yyds|码住|狠狠|救命", re.I)
 EMOJI = re.compile("[\U0001f000-\U0001faff\u2300-\u23ff\u25a0-\u27bf\ufe0e\ufe0f\u200d\u20e3\U000e0020-\U000e007f]")
-HASHTAG = re.compile(r"#[^\s#，。！？、,!?]+#?")
+HASHTAG = re.compile(r"(?<!\b[Cc])#[^\s#，。！？、,!?]+#?")
 DIVIDERS = str.maketrans({"｜": " ", "|": " ", "丨": " "})
+PUNCTUATION = "，。！？、,!?；;：:"
+MARKETING_PREFIX = re.compile(rf"(?<!\S)(?:{CLICKBAIT.pattern})[{PUNCTUATION}]*", re.I)
 LABEL_FIELDS = ("topic", "kind", "scene", "entities", "what", "when", "tool")
 
 
 def clean_title(title):
     text = HASHTAG.sub(" ", title.translate(DIVIDERS))
-    text = CLICKBAIT.sub("", EMOJI.sub("", text))
-    return " ".join(text.split())
+    text = EMOJI.sub("", text)
+
+    def bracket(match):
+        remaining, count = CLICKBAIT.subn("", match[1])
+        return " " + remaining.strip(PUNCTUATION + " ") + " " if count else match[0]
+
+    text = re.sub(r"【([^】]*)】", bracket, text)
+    text = CLICKBAIT.sub("", MARKETING_PREFIX.sub("", text))
+    text = re.sub(rf"([{PUNCTUATION}])(?:\s*[{PUNCTUATION}])+", r"\1", text)
+    text = " ".join(text.split()).lstrip(PUNCTUATION + " ")
+    return text if sum(char.isalnum() for char in text) >= 4 else title
 
 
 def excerpt(raw):
@@ -31,7 +41,7 @@ def excerpt(raw):
 
 
 def labels():
-    return {row["id"]: row for row in lib.jsonl(lib.HOME / "labels.jsonl")}
+    return {row["id"]: row for row in lib.jsonl(lib.state_path("labels.jsonl"))}
 
 
 def project(raw, label):
@@ -50,15 +60,7 @@ def related_key(src, dst):
     return (*sorted((src, dst)), "related")
 
 
-def curation_time(row):
-    try:
-        stamp = dt.datetime.fromisoformat(row.get("at", ""))
-        return stamp.replace(tzinfo=stamp.tzinfo or dt.timezone.utc)
-    except (TypeError, ValueError):
-        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
-
-
-def replay(rows, topics, edges):
+def replay(rows, topics, edges, events, classified):
     aliases = {}
 
     def resolve(key):
@@ -66,7 +68,12 @@ def replay(rows, topics, edges):
             key = aliases[key]
         return key
 
-    for event in sorted(lib.jsonl(lib.HOME / "curation.jsonl"), key=curation_time):
+    def reclassify(row, event):
+        if row["status"] != "hidden" and not row.get("user_status"):
+            if lib.event_time(classified.get(row["id"], {})) <= lib.event_time(event):
+                row.update(status="new", needs_relabel=True)
+
+    for event in events:
         op, key = event.get("op"), event.get("id", event.get("from", ""))
         target = resolve(event.get("to", ""))
         first = resolve(key)
@@ -74,6 +81,9 @@ def replay(rows, topics, edges):
             name = event.get("name", event.get("to"))
             if tax.valid_name(name):
                 topics[first]["name"] = name
+                for row in rows.values():
+                    if row["topic"] == first:
+                        reclassify(row, event)
         elif op == "merge" and first in topics and target in topics and first != tax.PENDING:
             if target == first or target.startswith(first + "/"):
                 continue
@@ -81,9 +91,11 @@ def replay(rows, topics, edges):
             aliases.update(dict.fromkeys(moved, target))
             for name in moved:
                 del topics[name]
+            members = set(event.get("items", []))
             for row in rows.values():
-                if row["topic"] in moved:
+                if row["topic"] in moved or (row["id"] in members and not row.get("user_topic")):
                     row.update(topic=target, user_topic=True)
+                    reclassify(row, event)
             for (src, dst, rel), by in list(edges.items()):
                 if src not in moved and dst not in moved:
                     continue
@@ -115,6 +127,8 @@ def replay(rows, topics, edges):
                 row[field] = value
                 if field == "entities":
                     row["user_entities"] = True
+                if field == "status":
+                    row["user_status"] = True
         elif op in ("relate", "unrelate"):
             src = resolve(event.get("src", key))
             dst = resolve(event.get("dst", target))
@@ -140,22 +154,26 @@ def state():
                 key = parent
         elif key not in topics:
             row.update(topic=tax.PENDING, status="new")
-    wiki = notes.load()
+    events = lib.curation()
+    wiki = notes.load(events)
     edges, entities = {}, {}
     repos = {item.casefold(): item for item in rows if rows[item]["source"] == "github"}
     for key, note in wiki.items():
         if key not in topics:
             continue
-        fields = note["fields"]
-        for other in notes.inline_list(fields.get("related", "")) or []:
+        fields = note.get("fields", {})
+        by = note["owner"]
+        for other in notes.related_ids(fields.get("related", "")):
             if other in topics and other != key:
-                edges[related_key(key, other)] = "ai"
+                link = related_key(key, other)
+                if edges.get(link) != "user":
+                    edges[link] = by
         for tool in notes.inline_list(fields.get("tools", "")) or []:
             name = re.sub(r"^https?://github\.com/|^github:", "", tool, flags=re.I).rstrip("/")
             repo = f"github:{name}".removesuffix(".git")
             dst = repos.get(repo.casefold(), f"tool:{name}")
-            edges[key, dst, "recommends_tool"] = "ai"
-    replay(rows, topics, edges)
+            edges[key, dst, "recommends_tool"] = by
+    replay(rows, topics, edges, events, classified)
     groups = defaultdict(dict)
     for row in sorted(rows.values(), key=lambda row: (row["seen"], row["saved"], row["id"])):
         key, topic = row["id"], row["topic"]

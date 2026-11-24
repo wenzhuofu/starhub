@@ -6,6 +6,7 @@ VISIBLE = "item.status <> 'hidden' AND item.removed = ''"
 ROW_LIMIT = 100
 NEIGHBOR_LIMIT = 20
 NOTE_LIMIT = 6000
+MAP_LIMIT = 3000
 SEARCH_FIELDS = ("clean_title", "scene", "excerpt", "topic", "entities")
 SEARCH_WEIGHTS = (5, 3, 1, 2, 2)
 
@@ -39,12 +40,26 @@ def map_topics(args):
                 SELECT topic.id, topic.name, topic.size, topic.summary, tree.depth + 1
                 FROM topic JOIN tree ON topic.parent = tree.id WHERE tree.depth < ?
             )
-            SELECT * FROM tree ORDER BY (id = '待定' OR id LIKE '待定/%'), id
-        """, (args.depth,))
-        for row in tree:
-            full = row["id"].rpartition("/")[0]
-            label = f"{full}/{row['name']}" if full else row["name"]
-            print(f"{'  ' * (row['depth'] - 1)}{snippet(label, 80)}  {row['size']}  {snippet(row['summary'], 80)}".rstrip())
+            SELECT * FROM tree ORDER BY (id = '待定' OR id LIKE '待定/%'), replace(id, '/', char(1))
+        """, (args.depth,)).fetchall()
+    rows = []
+    for row in tree:
+        path = row["id"]
+        label = path if path.rsplit("/", 1)[-1] == row["name"] else f"{path}（{row['name']}）"
+        rows.append((f"{'  ' * (row['depth'] - 1)}{snippet(label, 80)}  {row['size']}", row["summary"]))
+    available = MAP_LIMIT - sum(len(line) + 1 for line, _ in rows)
+    with_summary = sum(bool(summary) for _, summary in rows)
+    each = min(80, max(0, available // max(1, with_summary) - 2))
+    remaining = MAP_LIMIT
+    for i, (line, summary) in enumerate(rows):
+        if summary and each:
+            line += "  " + snippet(summary, each)
+        reserve = 32 if available < 0 and i + 1 < len(rows) else 0
+        if len(line) + 1 + reserve > remaining:
+            print(f"…另有 {len(rows) - i} 个主题，完整目录见 wiki/index.md")
+            break
+        print(line)
+        remaining -= len(line) + 1
 
 
 SUBTREE = """
@@ -61,7 +76,7 @@ def topic(args, state):
     if args.id not in topics:
         raise lib.Error(f"找不到主题：{args.id}")
     note = wiki.get(args.id)
-    if note:
+    if note and note.get("file"):
         body = note["body"].rstrip()
         print(body[:NOTE_LIMIT] + ("\n…（笔记较长，完整内容见 wiki/" + note["file"] + "）"
                                   if len(body) > NOTE_LIMIT else ""))

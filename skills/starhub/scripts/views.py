@@ -12,6 +12,8 @@ from tools import LEVELS, repo_name
 TEMPLATE = Path(__file__).resolve().parents[1] / "assets/page.html"
 PAGE = "starhub.html"
 INDEX = "tools/INDEX.md"
+INDEX_START, INDEX_END = "<!-- starhub:topics -->", "<!-- /starhub:topics -->"
+AGENTS_START, AGENTS_END = "<!-- starhub:begin -->", "<!-- starhub:end -->"
 ITEM_KEYS = ("id", "source", "via", "url", "author", "folder", "saved", "seen", "topic", "kind", "scene", "status")
 TOOL_KEYS = ("id", "url", "what", "when", "topic", "saved", "seen")
 
@@ -24,6 +26,7 @@ def page_data(state, conn):
             related[src].append(dst)
             related[dst].append(src)
     data = {"generated": lib.now(), "last_sync": lib.config(required=False)["last_sync"],
+            "wiki_dir": str((lib.HOME / "wiki").resolve()),
             "topics": [], "items": [], "tools": []}
     for topic in conn.execute("SELECT * FROM topic ORDER BY id"):
         entry = dict(topic)
@@ -85,35 +88,72 @@ def write_tools(state):
     lib.write(INDEX, "\n".join(lines))
 
 
-def write_wiki_index(conn):
-    start, end = "<!-- starhub:topics -->", "<!-- /starhub:topics -->"
-    lines = [start]
-    for row in conn.execute("SELECT * FROM topic ORDER BY id"):
-        slug = (row["note"] or notes.filename(row["id"])).removesuffix(".md")
-        lines.append(f"{'  ' * row['id'].count('/')}- [[{slug}]] {row['name']} ({row['size']}) {row['summary']}".rstrip())
-    block = "\n".join([*lines, end])
-    path = lib.HOME / "wiki/index.md"
-    old = path.read_text(encoding="utf-8") if path.exists() else "# starhub 主题索引\n"
+def managed_block(path, start, end, lines, initial):
+    block = "\n".join([start, *lines, end])
+    old = path.read_bytes().decode("utf-8") if path.exists() else initial
     before, marker, rest = old.partition(start)
     if marker and end in rest:
         text = before + block + rest.partition(end)[2]
+    elif marker or end in old:
+        raise lib.Error(f"{path.name} 的生成区缺少成对标记，请修复标记后重试")
     else:
-        text = old.rstrip() + "\n\n" + block + "\n"
-    if text != old:
-        lib.write("wiki/index.md", text)
+        separator = "\n" if old.endswith("\n") else "\n\n" if old else ""
+        text = old + separator + block + "\n"
+    if text != old or not path.exists():
+        lib.write(path, text)
+
+
+def write_wiki_index(conn):
+    lines, previous = [], None
+    tree = list(conn.execute("SELECT * FROM topic ORDER BY replace(id, '/', char(1))"))
+    names = {row["id"]: row["name"] for row in tree}
+    for row in tree:
+        if not row["note"]:
+            continue
+        root = row["id"].partition("/")[0]
+        if root != previous:
+            lines.extend(["", "## " + names[root], ""])
+            previous = root
+        slug = row["note"].removesuffix(".md")
+        summary, updated = " ".join(row["summary"].split()) or "—", row["updated"] or "—"
+        lines.append(f"- [[{slug}|{row['name']}]] — {summary}（{row['size']} 条，{updated}）")
+    managed_block(lib.HOME / "wiki/index.md", INDEX_START, INDEX_END, lines, "# starhub 主题目录\n")
+
+
+def write_agents(topics):
+    reference = TEMPLATE.parent.parent / "references/ingest.md"
+    rules = reference.read_text(encoding="utf-8").split("写法要求：\n", 1)[1].split("\n## ", 1)[0].strip()
+    active = {topic["id"] for topic in tax.load()["topics"]} | {tax.PENDING}
+    lines = ["", "## 目录约定", "",
+             "- wiki/index.md 是主题目录，wiki/log.md 是入库日志。",
+             "- 主题笔记放在 wiki/<主题路径>.md，主题之间使用 Wikilink。",
+             "- wiki/insights/ 由用户维护。raw/ 保存平台事实，state/ 保存程序状态。",
+             "", "## 主题树", ""]
+    for key in sorted(topics.keys() & active, key=lambda key: key.replace("/", "\x01")):
+        lines.append(f"{'  ' * key.count('/')}- {key}（{topics[key]['name']}）")
+    lines.extend(["", "## 写法要求", "", rules, ""])
+    managed_block(lib.HOME / "AGENTS.md", AGENTS_START, AGENTS_END, lines, "# starhub 知识库\n")
 
 
 def init_layout():
-    if not (lib.HOME / "taxonomy.json").exists():
+    if not lib.state_path("taxonomy.json").exists():
         tax.save(tax.DEFAULT)
-    for name in ("labels.jsonl", "curation.jsonl"):
+    for name, text in (("labels.jsonl", ""), ("curation.jsonl", ""), ("notes.json", "{}\n"), ("usage.jsonl", "")):
+        path = lib.state_path(name)
+        if not path.exists():
+            lib.write(path, text)
+    for name in ("wiki/insights", "raw/cache", "state/vendor"):
+        (lib.HOME / name).mkdir(parents=True, exist_ok=True)
+    for name, text in (("CLAUDE.md", "见 AGENTS.md\n"), ("wiki/log.md", "# starhub 日志\n"),
+                       (".obsidian/app.json", '{"userIgnoreFilters": ["state/"]}\n')):
         if not (lib.HOME / name).exists():
-            lib.write(name, "")
+            lib.write(name, text)
 
 
 def rebuild():
     init_layout()
     state = catalog.state()
+    write_agents(state[1])
     index_db.write(state)
     with index_db.open_index() as conn:
         write_wiki_index(conn)

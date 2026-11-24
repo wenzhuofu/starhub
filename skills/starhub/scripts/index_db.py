@@ -19,7 +19,7 @@ CREATE TABLE item (
 );
 CREATE INDEX item_topic ON item(topic);
 CREATE TABLE topic (
-    id TEXT PRIMARY KEY, name TEXT, parent TEXT, summary TEXT, size INTEGER, updated TEXT, note TEXT
+    id TEXT PRIMARY KEY, name TEXT, parent TEXT, summary TEXT, size INTEGER, updated TEXT, note TEXT, owner TEXT
 );
 CREATE INDEX topic_parent ON topic(parent);
 CREATE TABLE edge (src TEXT, dst TEXT, rel TEXT, by TEXT, PRIMARY KEY (src, dst, rel));
@@ -33,15 +33,16 @@ CREATE TABLE build (stamp TEXT);
 
 
 def db_path():
-    return lib.HOME / "starhub.db"
+    return lib.state_path("starhub.db")
 
 
 def signature():
     home = lib.HOME
-    paths = [home / name for name in ("labels.jsonl", "taxonomy.json", "curation.jsonl")]
+    paths = [lib.state_path(name) for name in ("labels.jsonl", "taxonomy.json", "curation.jsonl", "notes.json")]
     paths.extend((home / "raw").glob("*.jsonl"))
-    paths.extend(path for path in (home / "wiki").glob("*.md") if path.name != "index.md")
-    paths.extend((home / "cache").rglob("*.md"))
+    paths.extend(path for path in (home / "wiki").rglob("*.md") if path.parent != home / "wiki"
+                 or path.name not in ("index.md", "log.md"))
+    paths.extend((home / "raw/cache").rglob("*.md"))
     stamp = hashlib.sha256(SCHEMA.encode("utf-8"))
     for path in sorted(paths):
         if path.exists():
@@ -53,8 +54,8 @@ def signature():
 
 def write(state):
     rows, topics, wiki, entities, edges = state
-    lib.HOME.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=lib.HOME, suffix=".db", delete=False) as file:
+    db_path().parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=db_path().parent, suffix=".db", delete=False) as file:
         temp = Path(file.name)
     try:
         with closing(sqlite3.connect(temp)) as conn, conn:
@@ -65,9 +66,10 @@ def write(state):
             conn.executemany("INSERT INTO search VALUES (?, ?, ?, ?, ?, ?)", (
                 (key, row["clean_title"], row["scene"], row["excerpt"], row["topic"], " ".join(row["entities"]))
                 for key, row in rows.items()))
-            conn.executemany("INSERT INTO topic VALUES (?, ?, ?, ?, 0, ?, ?)", (
+            conn.executemany("INSERT INTO topic VALUES (?, ?, ?, ?, 0, ?, ?, ?)", (
                 (key, row["name"], row.get("parent", ""), wiki.get(key, {}).get("fields", {}).get("summary", ""),
-                 wiki.get(key, {}).get("fields", {}).get("updated", ""), wiki.get(key, {}).get("file", ""))
+                 wiki.get(key, {}).get("fields", {}).get("updated", ""), wiki.get(key, {}).get("file", ""),
+                 wiki.get(key, {}).get("owner", "ai"))
                 for key, row in topics.items()))
             conn.execute("""
                 WITH RECURSIVE counted(id, size) AS (

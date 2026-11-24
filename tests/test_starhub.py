@@ -57,8 +57,8 @@ class StarhubTest(unittest.TestCase):
         self.home.mkdir()
         self.addCleanup(shutil.rmtree, self.home)
         self.enterContext(patch.object(library, "HOME", self.home))
-        self.enterContext(patch.multiple(tools, HOME=self.home, VENDOR=self.home / "vendor"))
         self.enterContext(patch.dict(os.environ, STARHUB_HOME=str(self.home), GITHUB_TOKEN="fixture-token"))
+        os.environ.pop("STARHUB_VENDOR", None)
         self.enterContext(patch.object(sources.urllib.request, "urlopen", side_effect=AssertionError("unexpected network")))
         self.fixture = json.loads((FIXTURES / "opencli.json").read_text(encoding="utf-8"))
 
@@ -80,8 +80,8 @@ class StarhubTest(unittest.TestCase):
             if fields or item["status"] == "ok":
                 labels.append({"id": key, "by": "ai" if item["status"] == "ok" else "migration", **fields})
         library.put_raw(raw)
-        library.put_rows("labels.jsonl", labels)
-        library.put_rows("curation.jsonl", events)
+        library.put_rows(library.state_path("labels.jsonl"), labels)
+        library.put_rows(library.state_path("curation.jsonl"), events)
 
     def configure(self, sources_arg="github"):
         return self.command("setup", "--github", "tester", "--sources", sources_arg)
@@ -101,6 +101,8 @@ class StarhubTest(unittest.TestCase):
             self.assertEqual(self.command("setup")[0], 0)
             gh.assert_called_once_with("api", "user", "--jq", ".login")
         cfg = library.config()
+        self.assertEqual(json.loads((self.home / ".obsidian/app.json").read_text(encoding="utf-8")),
+                         {"userIgnoreFilters": ["state/"]})
         library.put_config({**cfg, "extra": {"keep": True}})
         self.command("setup", "--sources", "github,xhs")
         self.assertEqual(library.config(), {**cfg, "sources": ["github", "xhs"], "extra": {"keep": True}})
@@ -404,6 +406,43 @@ class StarhubTest(unittest.TestCase):
                 self.assertEqual(calls[-1][-1], "close")
                 self.assertEqual(counts, list(range(1, 11)) + list(range(1, 13)))
 
+    def test_bili_sync_resumes_when_cap_and_read_error_interrupt_history(self):
+        self.configure("bili")
+        nav = self.fixture["bilibili_nav"]["data"]["data"]
+        pages = []
+        broken = False
+
+        def get(_self, _browser, path, _key="", **params):
+            if path.endswith("/nav"):
+                return nav
+            if path.endswith("/list-all"):
+                return {"list": [{"id": 111, "title": "教程"}]}
+            page = params["pn"]
+            pages.append(page)
+            if broken and page == 12:
+                raise library.Error("列表中断")
+            return {"medias": [{"bvid": f"BV{page}", "title": "模拟视频"}], "has_more": page < 13}
+
+        with patch.object(sources.shutil, "which", return_value="opencli"), \
+             patch.object(sources.OpenCLI, "uid", return_value="12345"), \
+             patch.object(sources.OpenCLI, "call"), patch.object(sources.OpenCLI, "bili_get", get):
+            self.assertEqual(self.command("sync")[0], 0)
+            self.assertEqual(pages, list(range(1, 11)))
+            history = library.config()["bili_history"]["folders"]
+            self.assertEqual(history["111"], {"next": 11, "done": False})
+            raw_file = self.home / "raw/bili.jsonl"
+            prefix = raw_file.read_bytes()
+            broken, pages[:] = True, []
+            self.assertEqual(self.command("sync")[0], 1)
+            self.assertEqual(pages, [1, 11, 12])
+            self.assertEqual(library.config()["bili_history"]["folders"]["111"]["next"], 12)
+            broken, pages[:] = False, []
+            self.assertEqual(self.command("sync")[0], 0)
+            self.assertEqual(pages, [1, 12, 13])
+            self.assertTrue(library.config()["bili_history"]["folders"]["111"]["done"])
+        self.assertEqual(len(library.raw_items()), 13)
+        self.assertTrue(raw_file.read_bytes().startswith(prefix))
+
     def test_doctor_and_partial_sync(self):
         self.configure("github,xhs,bili")
 
@@ -494,7 +533,7 @@ class StarhubTest(unittest.TestCase):
             "id": key, "topic": topic, "kind": "攻略", "scene": "周末出门", "entities": [], **fields}))
 
     @staticmethod
-    def note_text(topic="旅行/杭州", related="旅行/上海", tools="dev/saved, dev/pending"):
+    def note_text(topic="旅行/杭州", related='"[[旅行/上海|上海]]"', tools="dev/saved, dev/pending"):
         return f"""---
 topic: {topic}
 summary: 早点到景点，避开人潮
@@ -511,11 +550,10 @@ tools: [{tools}]
 - 早上走湖边路线 [1]
 
 ## 出处
-1. [西湖步行路线](https://example.com/walk) — 小红书 · 2026-11 · 给出绕湖路线
+1. [西湖步行路线](https://example.com/walk) — 给出绕湖路线
 """
 
     def test_v1_migration_preserves_backup_and_newer_labels(self):
-        self.configure("github,xhs,bili")
         entries = [
             row("github:Dev/Repo", status="ok", topic="开发", title="Dev/Repo", what="旧说明", when="旧场景",
                 tool={"type": "skill", "level": "active", "ref": "abcdef1"}, saved="2026-10-01T12:00:00Z"),
@@ -524,14 +562,18 @@ tools: [{tools}]
         ]
         library.put_rows("items.jsonl", entries)
         original = (self.home / "items.jsonl").read_bytes()
-        library.put_config({**library.config(), "version": 1, "extra": "保留"})
+        library.write("config.json", json.dumps({"version": 1, "extra": "保留", "github": "tester",
+                                                "sources": ["github", "xhs", "bili"], "last_sync": ""}))
         library.put_rows("usage.jsonl", [{"id": "xhs:walk", "note": "保留", "date": "2026-01-02"}])
+        library.write("vendor/fixture/SKILL.md", "原来拉取的工具\n")
         with self.assertRaisesRegex(library.Error, "migrate-v2"):
             self.command("status")
         self.assertIn("已迁移 3 条", self.command("migrate-v2")[1])
         self.assertFalse((self.home / "items.jsonl").exists())
-        self.assertEqual((self.home / "items.v1.jsonl").read_bytes(), original)
+        self.assertEqual(library.state_path("items.v1.jsonl").read_bytes(), original)
         self.assertEqual((library.config()["version"], library.config()["extra"]), (2, "保留"))
+        self.assertFalse(any((self.home / name).exists() for name in ("config.json", "usage.jsonl", "vendor")))
+        self.assertEqual(library.state_path("vendor/fixture/SKILL.md").read_bytes(), "原来拉取的工具\n".encode())
         raw = library.raw_items()
         self.assertEqual(set(raw["github:Dev/Repo"]), {
             "id", "source", "via", "url", "title", "author", "folder", "saved", "seen", "removed", "meta"})
@@ -543,21 +585,35 @@ tools: [{tools}]
         self.assertEqual(labels["xhs:walk"]["topic"], "待定/旅行")
         self.assertNotIn("what", labels["xhs:walk"])
         self.assertEqual(catalog.state()[0]["bili:old"]["status"], "hidden")
-        self.assertEqual(library.jsonl(self.home / "usage.jsonl")[0]["note"], "保留")
+        self.assertEqual(library.jsonl(library.state_path("usage.jsonl"))[0]["note"], "保留")
         self.apply_taxonomy("旅行")
         self.label("xhs:walk", "旅行")
-        before = (self.home / "labels.jsonl").read_bytes()
+        before = library.state_path("labels.jsonl").read_bytes()
         self.assertIn("已迁移", self.command("migrate-v2")[1])
-        self.assertEqual((self.home / "labels.jsonl").read_bytes(), before)
+        self.assertEqual(library.state_path("labels.jsonl").read_bytes(), before)
         self.assertIn("旅行", self.command("map")[1])
+
+    def test_migration_preserves_round_one_notes_and_cache(self):
+        library.write("taxonomy.json", json.dumps({"topics": [
+            {"id": "旅行", "name": "旅行"}, {"id": "旅行/杭州", "name": "杭州", "parent": "旅行"}]}))
+        original = self.note_text(related="").replace("tools: [dev/saved, dev/pending]", "tools: []\ncompiled: {}")
+        old_note = self.home / "wiki/旅行%2F杭州.md"
+        library.write(old_note, original)
+        library.write("cache/xhs/walk.md", "已缓存的内容\n")
+        self.command("migrate-v2")
+        self.assertFalse(old_note.exists())
+        self.assertEqual((self.home / "wiki/旅行/杭州.md").read_bytes(), original.encode())
+        self.assertEqual(notes.load(library.curation())["旅行/杭州"]["owner"], "user")
+        self.assertEqual((self.home / "raw/cache/xhs/walk.md").read_bytes(), "已缓存的内容\n".encode())
+        self.assertEqual(self.command("migrate-v2")[0], 0)
 
     def test_normalization_duplicate_relation_and_cached_excerpt(self):
         url = "https://example.com/walk"
         self.put(row("bili:early", url=url, seen="2026-10-01", title="西湖 v1"),
                  row("xhs:late", url=url, seen="2026-11-01T03:04:05+08:00",
                      title="😍 必看｜西湖🧑‍🍳 | 龙井丨yyds #杭州旅行# 码住", meta={"desc": "简介" * 160}))
-        self.assertEqual(catalog.clean_title("yyds，  一定要看｜干货题目 #话题"), "， 题目")
-        self.assertEqual(catalog.clean_title("路线#标签#｜保姆级"), "路线")
+        self.assertEqual(catalog.clean_title("yyds，  一定要看｜干货野餐题目 #话题"), "野餐题目")
+        self.assertEqual(catalog.clean_title("路线#标签#｜保姆级"), "路线#标签#｜保姆级")
         self.assertEqual(len(catalog.state()[0]["xhs:late"]["excerpt"]), 300)
         self.assertEqual(library.raw_items()["xhs:late"]["seen"], "2026-11-01")
         self.assertIn("same_as  bili:early  [source]", self.command("explain", "xhs:late")[1])
@@ -568,6 +624,13 @@ tools: [{tools}]
         self.assertIn("正文片段", text)
         self.assertNotIn("简介", text)
         self.assertLess(len(text), 450)
+
+    def test_clickbait_corpus(self):
+        titles = library.jsonl(FIXTURES / "titles.jsonl")
+        self.assertGreaterEqual(len(titles), 30)
+        for original, expected in titles:
+            with self.subTest(original=original):
+                self.assertEqual(catalog.clean_title(original), expected)
 
     def test_taxonomy_structure_and_query_budgets(self):
         self.put(*(row(f"xhs:{i:02d}", title="西湖公园 " + "标题" * 100, folder="清单") for i in range(24)))
@@ -640,12 +703,14 @@ tools: [{tools}]
         text = self.note_text()
         invalid = (text.replace("早点到景点，避开人潮", "长" * 81).replace("2026-11-24", "2026-02-30")
                    .replace("旅行/上海", "旅行/未知")
-                   .replace("[1]\n\n## 出处", "[2]\n\n## 出处").replace("2026-11 ·", "2026-99 ·"))
+                   .replace("[1]\n\n## 出处", "[2]\n\n## 出处").replace("https://", "file://"))
         code, output = self.command("note", "旅行/杭州", "-", stdin=invalid)
         self.assertEqual(code, 1)
         for issue in ("summary", "updated", "related", "要点", "出处"):
             self.assertIn(issue, output)
         self.assertFalse((self.home / "wiki" / notes.filename("旅行/杭州")).exists())
+        legacy = text.replace("— 给出绕湖路线", "— 小红书 · 2026-11 · 给出绕湖路线")
+        self.assertIn("平台和日期由网页补齐", self.command("note", "旅行/杭州", "-", stdin=legacy)[1])
         before = self.command("compile", "旅行/杭州")[1]
         self.assertIn("新增或更新 1 条", before)
         self.assertIn("早起绕湖", before)
@@ -655,7 +720,8 @@ tools: [{tools}]
         self.assertIn("recommends_tool  github:dev/saved  [ai]", self.command("explain", "旅行/杭州")[1])
         self.assertIn("dev/pending", (self.home / "tools/INDEX.md").read_text(encoding="utf-8"))
         page = self.page_payload()
-        self.assertEqual(set(page), {"generated", "last_sync", "topics", "items", "tools"})
+        self.assertEqual(set(page), {"generated", "last_sync", "wiki_dir", "topics", "items", "tools"})
+        self.assertEqual(page["wiki_dir"], str(self.home / "wiki"))
         item, = page["items"]
         tool, = page["tools"]
         self.assertEqual(set(item), {"id", "source", "via", "url", "title", "author", "folder", "saved", "seen",
@@ -665,10 +731,12 @@ tools: [{tools}]
                                      "saved", "seen"})
         self.assertEqual(tool["id"], "github:dev/saved")
         topic = next(entry for entry in page["topics"] if entry["id"] == "旅行/杭州")
-        self.assertEqual(set(topic), {"id", "name", "parent", "summary", "size", "updated", "related", "note"})
+        self.assertEqual(set(topic), {"id", "name", "parent", "summary", "size", "updated", "related", "note", "owner"})
+        self.assertEqual(topic["owner"], "ai")
         self.assertEqual((topic["size"], topic["related"]), (1, ["旅行/上海"]))
         self.assertEqual(topic["note"], text.split("---\n", 2)[-1])
-        self.assertIn("[[旅行%2F杭州]]", (self.home / "wiki/index.md").read_text(encoding="utf-8"))
+        self.assertIn("## 旅行\n\n- [[旅行/杭州|杭州]] — 早点到景点，避开人潮（1 条，2026-11-24）",
+                      (self.home / "wiki/index.md").read_text(encoding="utf-8"))
         self.label("xhs:walk", "旅行/杭州", scene="同一天更正场景")
         self.assertIn("同一天更正场景", self.command("compile")[1])
         self.command("set", "xhs:walk", "status", "hidden")
@@ -691,7 +759,8 @@ tools: [{tools}]
             ("2026-11-22", "unrelate", {"src": "旅行/上海", "dst": "旅行/杭州"}),
             ("2026-11-22", "relate", {"src": "xhs:a", "dst": "旅行/杭州"}),
         ]
-        library.put_rows("curation.jsonl", [{"at": at, "by": "user", "op": op, **fields} for at, op, fields in events])
+        library.put_rows(library.state_path("curation.jsonl"),
+                         [{"at": at, "by": "user", "op": op, **fields} for at, op, fields in events])
         self.command("set", "xhs:a", "scene", "用户场景")
         self.command("set", "xhs:a", "entities", "地点:上海")
         self.command("set", "github:dev/tool", "ref", "abcdef7")
@@ -723,19 +792,208 @@ tools: [{tools}]
                 return {table: list(map(tuple, db.execute(f"SELECT * FROM {table} ORDER BY 1, 2")))
                         for table in ("item", "topic", "entity", "edge", "search")}
 
-        durable = [*self.home.glob("*.json*"), *self.home.glob("raw/*"), *self.home.glob("wiki/*")]
+        durable = [*self.home.glob("state/*.json*"), *self.home.glob("raw/*.jsonl"), *self.home.glob("wiki/**/*.md")]
         before = {path: path.read_bytes() for path in durable}
         expected = snapshot()
         wiki_index = self.home / "wiki/index.md"
         library.write(wiki_index, wiki_index.read_text(encoding="utf-8") + "\n自定义索引说明\n")
         before[wiki_index] = wiki_index.read_bytes()
-        (self.home / "starhub.db").unlink()
+        library.state_path("starhub.db").unlink()
         self.assertIn("已重建", self.command("rebuild")[1])
         self.assertEqual(snapshot(), expected)
         self.command("rebuild")
         self.assertEqual(snapshot(), expected)
         self.assertEqual({path: path.read_bytes() for path in durable}, before)
         self.assertEqual(self.command("explain", "xhs:a")[1], explanation)
+
+    def test_obsidian_layout_and_append_only_activity_log(self):
+        agents = self.home / "AGENTS.md"
+        before = "# 私人说明\r\n".encode()
+        after = "\r\n保留尾注\r\n\r\n".encode()
+        marks = b"<!-- starhub:begin -->\nold\n<!-- starhub:end -->"
+        agents.write_bytes(before + marks + after)
+        settings = '{"userIgnoreFilters":["我的目录/"],"custom":true}\r\n'.encode()
+        settings_path = self.home / ".obsidian/app.json"
+        settings_path.parent.mkdir()
+        settings_path.write_bytes(settings)
+        self.configure("xhs")
+        self.apply_taxonomy("旅行", "旅行/杭州")
+        self.command("taxonomy", "add", "旅行/上海")
+        generated = agents.read_bytes()
+        self.assertTrue(generated.startswith(before + b"<!-- starhub:begin -->"))
+        self.assertTrue(generated.endswith(b"<!-- starhub:end -->" + after))
+        self.assertIn("旅行/上海".encode(), generated)
+        self.assertIn("收藏之间有分歧时，写出分歧".encode(), generated)
+        self.assertEqual(settings_path.read_bytes(), settings)
+        self.assertEqual((self.home / "CLAUDE.md").read_bytes(), "见 AGENTS.md\n".encode())
+        self.assertTrue((self.home / "wiki/insights").is_dir())
+        self.assertTrue((self.home / "raw/cache").is_dir())
+        self.assertTrue(library.state_path("vendor").is_dir())
+        self.assertTrue(library.state_path("config.json").exists())
+        self.put(row("xhs:walk"))
+        log_path = self.home / "wiki/log.md"
+        original = log_path.read_bytes()
+        with patch.object(sources.shutil, "which", return_value="opencli"), \
+             patch.object(sources.OpenCLI, "xhs_saved", return_value=[]):
+            self.command("sync")
+        self.command("classify")
+        self.label("xhs:walk", "旅行/杭州")
+        self.command("compile")
+        self.command("note", "旅行/杭州", "-", stdin=self.note_text(related=""))
+        self.assertEqual(self.command("lint")[0], 0)
+        data = log_path.read_bytes()
+        self.assertTrue(data.startswith(original))
+        self.assertNotIn(b"\r", data)
+        entries = [line.split(" | ")[0].split("] ")[1] for line in data.decode().splitlines() if line.startswith("## [")]
+        self.assertEqual(entries, ["taxonomy apply", "sync", "classify", "label", "compile", "note", "lint"])
+
+    def test_obsidian_edits_are_protected_until_released(self):
+        self.apply_taxonomy("旅行", "旅行/杭州")
+        self.put(row("xhs:a"), row("xhs:b"))
+        key = "旅行/杭州"
+        self.label("xhs:a", key)
+        text = self.note_text(related="")
+        self.assertEqual(self.command("note", key, "-", stdin=text)[0], 0)
+        path = self.home / "wiki/旅行/杭州.md"
+        first = path.read_bytes()
+        stored = notes.metadata()[key]
+        self.assertEqual(stored["hash"], notes.digest(first))
+        self.assertEqual(stored["members"], ["xhs:a"])
+        self.assertNotIn(b"compiled:", first)
+        edited = first.replace("早上去西湖".encode(), "我会下午去西湖".encode())
+        path.write_bytes(edited)
+        with index_db.open_index() as db:
+            self.assertEqual(db.execute("SELECT owner FROM topic WHERE id = ?", (key,)).fetchone()[0], "user")
+        self.label("xhs:b", key)
+        self.assertIn("没有待编译", self.command("compile", key)[1])
+        code, output = self.command("note", key, "-", stdin=text)
+        self.assertEqual(code, 1)
+        self.assertIn("由用户维护", output)
+        self.assertEqual(path.read_bytes(), edited)
+        self.assertEqual(notes.metadata()[key], stored)
+        self.assertEqual(next(topic for topic in self.page_payload()["topics"] if topic["id"] == key)["owner"], "user")
+        _, report = self.command("lint")
+        self.assertIn("用户维护的笔记有新成员", report)
+        self.assertEqual(self.command("release", key)[0], 0)
+        self.assertEqual(library.curation()[-1]["op"], "release")
+        self.assertEqual(path.read_bytes(), edited)
+        self.assertIn("新增或更新 1 条", self.command("compile", key)[1])
+        self.assertEqual(self.command("note", key, "-", stdin=text)[0], 0)
+        self.assertEqual(set(notes.metadata()[key]["members"]), {"xhs:a", "xhs:b"})
+        library.state_path("starhub.db").unlink()
+        self.command("rebuild")
+        self.assertEqual(next(topic for topic in self.page_payload()["topics"] if topic["id"] == key)["owner"], "ai")
+        self.assertEqual(path.read_bytes(), first)
+        path.unlink()
+        self.assertIn("还没有主题笔记", self.command("topic", key)[1])
+        self.assertEqual(self.command("note", key, "-", stdin=text)[0], 1)
+        self.assertEqual(self.command("release", key)[0], 0)
+        self.assertIn("新增或更新 2 条", self.command("compile", key)[1])
+
+    def test_note_accepts_obsidian_style_property_lists(self):
+        self.apply_taxonomy("旅行", "旅行/杭州", "旅行/上海")
+        text = self.note_text().replace('related: ["[[旅行/上海|上海]]"]', 'related:\n  - "[[旅行/上海|上海]]"')
+        text = text.replace("tools: [dev/saved, dev/pending]", "tools:\n  - dev/saved\n  - dev/pending")
+        self.assertEqual(self.command("note", "旅行/杭州", "-", stdin=text)[0], 0)
+        note = notes.load(library.curation())["旅行/杭州"]
+        self.assertEqual(notes.related_ids(note["fields"]["related"]), ["旅行/上海"])
+        self.assertEqual(notes.inline_list(note["fields"]["tools"]), ["dev/saved", "dev/pending"])
+
+    def test_curate_requeues_renamed_and_merged_topics_with_stable_batches(self):
+        self.apply_taxonomy("出门", "出门/周末", "出门/里弄", "合并", "合并/散步")
+        self.put(row("xhs:rename"), row("xhs:merge"), row("xhs:pending"),
+                 *(row(f"xhs:p{i:03}") for i in range(104)))
+        self.label("xhs:rename", "出门/周末")
+        self.label("xhs:merge", "合并/散步")
+        self.label("xhs:pending", "待定")
+        default = self.command("classify")[1]
+        self.assertEqual(default, self.command("classify")[1])
+        self.assertEqual(sum(line.startswith("xhs:") for line in default.splitlines()), 50)
+        wider = self.command("classify", "--limit", "100")[1]
+        self.assertEqual(sum(line.startswith("xhs:") for line in wider.splitlines()), 100)
+        self.assertNotIn("xhs:pending", default)
+        self.assertIn("xhs:pending", self.command("classify", "--pending")[1])
+        self.command("curate", "rename", "出门/周末", "周末路线")
+        self.command("curate", "merge", "合并", "出门/周末")
+        batch = self.command("classify")[1]
+        self.assertIn("xhs:rename", batch)
+        self.assertIn("xhs:merge", batch)
+        self.assertEqual(self.label("xhs:merge", "合并/散步")[0], 1)
+        self.label("xhs:rename", "出门/周末")
+        self.label("xhs:merge", "出门/里弄")
+        self.assertNotIn("xhs:merge", self.command("classify")[1])
+        self.assertEqual(catalog.state()[0]["xhs:merge"]["topic"], "出门/周末")
+        self.command("curate", "split", "出门/周末", "出门/里弄", "xhs:merge")
+        self.command("curate", "pin", "xhs:merge")
+        self.command("curate", "hide", "xhs:rename")
+        self.command("curate", "move", "xhs:pending", "出门/里弄")
+        rows = catalog.state()[0]
+        self.assertEqual(rows["xhs:merge"]["topic"], "出门/里弄")
+        self.assertTrue(rows["xhs:merge"]["pinned"])
+        self.assertEqual(rows["xhs:rename"]["status"], "hidden")
+        self.assertEqual(rows["xhs:pending"]["topic"], "出门/里弄")
+
+    def test_lint_reports_findings_and_fixes_only_generated_content(self):
+        self.apply_taxonomy("旅行", "旅行/杭州", "旅行/上海", "旅行/用户笔记")
+        self.put(row("xhs:gone", url="https://example.com/walk"), row("xhs:new"),
+                 *(row(f"xhs:pending-{i}") for i in range(51)))
+        self.label("xhs:gone", "旅行/杭州")
+        text = self.note_text().replace("早上去西湖。", "早上去[[不存在的页面|西湖]]。")
+        self.assertEqual(self.command("note", "旅行/杭州", "-", stdin=text)[0], 0)
+        self.label("xhs:new", "旅行/用户笔记")
+        stale = library.raw_items()
+        stale["xhs:gone"]["removed"] = "2026-11-24"
+        library.put_raw(stale, ["xhs"])
+        user_path = self.home / "wiki/旅行/用户笔记.md"
+        user_data = ("---\ntopic: 旅行/用户笔记\nsummary: 私人备注\n---\n# 我的笔记\n"
+                     "下面是断链 [[用户的坏链接|旧的]]。\n").encode()
+        library.write(user_path, user_data.decode())
+        insight_path = self.home / "wiki/insights/私人.md"
+        insight = "# 我的想法\n`[[示例代码]]`\n随机链接 [[未知]]。\n"
+        library.write(insight_path, insight)
+        index_path = self.home / "wiki/index.md"
+        catalogue = ("# 用户保留的说明\n<!-- starhub:topics -->\n"
+                     "- [[旅行/已移除|旧主题]]\n<!-- /starhub:topics -->\n")
+        library.write(index_path, catalogue)
+        code, report = self.command("lint")
+        self.assertEqual(code, 1)
+        for problem in ("断链", "孤立主题", "目录缺项", "目录断链", "笔记待更新", "出处已下架",
+                        "用户维护的笔记有新成员", "frontmatter", "待定积压"):
+            self.assertIn(problem, report)
+        self.assertNotIn("示例代码", report)
+        self.assertEqual(index_path.read_bytes(), catalogue.encode())
+        code, report = self.command("lint", "--fix")
+        self.assertEqual(code, 1)
+        self.assertNotIn("目录断链", report)
+        self.assertNotIn("不存在的页面", report)
+        self.assertIn("用户的坏链接", report)
+        self.assertEqual(user_path.read_bytes(), user_data)
+        self.assertEqual(insight_path.read_bytes(), insight.encode())
+        fixed = (self.home / "wiki/旅行/杭州.md").read_text(encoding="utf-8")
+        self.assertIn("早上去西湖。", fixed)
+        self.assertIn("related: []", fixed)
+        self.assertEqual(notes.load(library.curation())["旅行/杭州"]["owner"], "ai")
+        self.assertTrue(index_path.read_text(encoding="utf-8").startswith("# 用户保留的说明"))
+
+    def test_map_and_default_find_budgets_with_500_saved_items(self):
+        roots = [f"第{i}个分类" for i in range(10)]
+        leaves = [f"{root}/第{j}个旅行主题" for root in roots for j in range(7)]
+        self.apply_taxonomy(*roots, *leaves)
+        self.put(*(row(f"xhs:{i:03}", topic=leaves[i % len(roots) * 7 + i // len(roots) % 7],
+                       status="ok", title="共享公园散步路线",
+                       kind="攻略", scene="长场景", meta={"intro": "长正文" * 30}) for i in range(500)))
+        for topic in leaves:
+            text = self.note_text(topic=topic, related="").replace("早点到景点，避开人潮", "长" * 80)
+            library.write(f"wiki/{topic}.md", text)
+        output = self.command("map")[1]
+        self.assertLessEqual(len(output) / 2, 1500)
+        self.assertIn("第0个分类  50", output)
+        self.assertIn("第9个分类  50", output)
+        found = self.command("find", "公园散步")[1]
+        self.assertEqual(len(found.splitlines()), 20)
+        self.assertTrue(all(line.startswith("xhs:") for line in found.splitlines()))
+        for deep in ("长场景", "长正文", "小红书", "2020-01-02"):
+            self.assertNotIn(deep, found)
 
     def test_legacy_tool_flow(self):
         self.configure("xhs")
@@ -745,7 +1003,7 @@ tools: [{tools}]
         self.command("set", "legacy", "tool.skills", " skills/a,skills/b ")
         self.assertEqual(catalog.state()[0]["github:dev/legacy"]["tool"]["skills"], ["skills/a", "skills/b"])
         self.command("log", "xhs:used", "实际", "用过")
-        self.assertEqual(library.jsonl(self.home / "usage.jsonl")[0]["note"], "实际 用过")
+        self.assertEqual(library.jsonl(library.state_path("usage.jsonl"))[0]["note"], "实际 用过")
         with patch.object(tools, "remote_head", return_value="0011223"):
             self.assertIn("abcdefa → 0011223", self.command("outdated")[1])
             report = self.command("review")[1]
@@ -757,7 +1015,7 @@ tools: [{tools}]
         with patch.object(tools, "vendor_one") as vendor_one:
             self.command("vendor")
             self.assertEqual(vendor_one.call_args.args[0]["id"], "github:dev/legacy")
-        path = self.home / "vendor/dev__legacy"
+        path = library.state_path("vendor/dev__legacy")
         (path / ".git").mkdir(parents=True)
         (path / "skills/a").mkdir(parents=True)
         (path / "skills/a/SKILL.md").write_text("---\nname: sample\ndescription: 一个示例\n---\n", encoding="utf-8")
@@ -799,8 +1057,8 @@ tools: [{tools}]
             self.assertEqual(saved["seen"], project["added"])
             self.assertEqual(saved["tool"]["host"], project["host"])
             self.assertEqual(saved["topic"], "待定/" + raw["meta"]["categories"].get(project["category"], project["category"]))
-        self.assertEqual(len(library.jsonl(self.home / "usage.jsonl")), 2)
-        self.assertEqual(library.jsonl(self.home / "usage.jsonl")[0]["id"], f"github:{raw['project'][0]['repo']}")
+        self.assertEqual(len(library.jsonl(library.state_path("usage.jsonl"))), 2)
+        self.assertEqual(library.jsonl(library.state_path("usage.jsonl"))[0]["id"], f"github:{raw['project'][0]['repo']}")
 
 
 class EntryPointTest(unittest.TestCase):

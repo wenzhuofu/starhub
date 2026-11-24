@@ -9,8 +9,10 @@ import sys
 from collections import Counter
 
 import catalog
+import curation
 import ingest
 import library as lib
+import linting
 import migration
 import pipeline
 import queries
@@ -60,6 +62,7 @@ def setup(args):
     cfg["github"] = login
     lib.put_config(cfg)
     views.init_layout()
+    views.write_agents(catalog.state()[1])
     prefix = f"GitHub 用户名 {login}，" if login else ""
     print(prefix + "已启用 " + "、".join(LABELS[key] for key in cfg["sources"]))
 
@@ -162,9 +165,9 @@ def set_field(args, state):
 
 def log(args, rows):
     row = lib.lookup(args.q, rows)
-    usage = lib.jsonl(lib.HOME / "usage.jsonl")
+    usage = lib.jsonl(lib.state_path("usage.jsonl"))
     usage.append({"date": lib.today(), "id": row["id"], "note": " ".join(args.note)})
-    lib.put_rows("usage.jsonl", usage)
+    lib.put_rows(lib.state_path("usage.jsonl"), usage)
     print(f"已记录 {row['id']}")
 
 
@@ -197,6 +200,9 @@ def cli():
         ("label", pipeline.label, "保存归类结果", "state"),
         ("compile", pipeline.compile_topic, "整理待编译的主题资料", "state"),
         ("note", pipeline.note, "保存主题笔记", "state"),
+        ("release", curation.release, "把笔记交还给 AI", "state"),
+        ("curate", curation.curate, "编辑收藏和主题结构", "state"),
+        ("lint", linting.lint, "检查知识库", "state"),
         ("map", queries.map_topics, "查看主题树", ""),
         ("topic", queries.topic, "查看主题笔记和成员", "state"),
         ("explain", queries.explain, "查看条目及关系", ""),
@@ -226,6 +232,8 @@ def cli():
     parsers["map"].add_argument("--depth", type=int, choices=(1, 2), default=2)
     parsers["topic"].add_argument("--items", type=int, default=20)
     parsers["compile"].add_argument("--offset", type=int, default=0)
+    parsers["lint"].add_argument("--fix", action="store_true")
+    parsers["classify"].add_argument("--pending", action="store_true", help="重看已归为待定的收藏")
     for name in ("classify", "find"):
         parsers[name].add_argument("--source", choices=LABELS, metavar="来源")
     for name, default in (("classify", 50), ("find", 20), ("compile", 50)):
@@ -233,7 +241,7 @@ def cli():
     parsers["page"].add_argument("--open", action="store_true")
     for name in ("show", "set", "log", "bump", "vendor"):
         parsers[name].add_argument("q", nargs="*" if name == "vendor" else None, metavar="收藏")
-    for name in ("read", "topic", "note", "compile", "explain"):
+    for name in ("read", "topic", "note", "compile", "explain", "release"):
         parsers[name].add_argument("id", nargs="?" if name == "compile" else None, metavar="编号")
     for name in ("label", "note"):
         parsers[name].add_argument("file", metavar="文件或 -")
@@ -250,6 +258,11 @@ def cli():
     add = lexicon.add_parser("add", help="新增子主题")
     add.add_argument("id", metavar="主题")
     add.add_argument("--parent", metavar="上级主题")
+    edits = parsers["curate"].add_subparsers(dest="op", title="命令", required=True)
+    for op, (help_text, operands) in curation.COMMANDS.items():
+        edit = edits.add_parser(op, help=help_text)
+        for operand in operands:
+            edit.add_argument(operand, nargs="+" if operand == "members" else None)
     return parser.parse_args()
 
 
@@ -261,14 +274,15 @@ def main():
     if getattr(args, "offset", 0) < 0:
         raise Error("--offset 须为非负整数")
     with lib.writing():
-        if (lib.HOME / "items.jsonl").exists() and args.func not in (migration.migrate_v2, doctor):
-            raise Error("发现 v1 收藏，请先运行 starhub migrate-v2")
+        if args.func is not migration.migrate_v2 and migration.needs_migration():
+            raise Error("发现旧版收藏库，请先运行 starhub migrate-v2")
         values = []
         if args.data:
             state = catalog.state()
             values = [state[0] if args.data == "rows" else state]
         result = args.func(args, *values)
-        refresh = args.func in (migration.migrate_v2, migration.migrate_catalog, set_field, tools.bump)
+        refresh = args.func in (migration.migrate_v2, migration.migrate_catalog, set_field, tools.bump,
+                                curation.curate, curation.release)
         refresh |= args.func is pipeline.taxonomy and args.action != "propose"
         refresh |= args.func is pipeline.note and not result
         if refresh:

@@ -5,7 +5,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-from library import Error, HOME, VENDOR, append_curation, config, jsonl, lookup, run, today, visible
+from library import Error, append_curation, config, jsonl, lookup, run, state_path, today, vendor_path, visible
 from sources import GitHub, SOURCE_ERRORS, source_error
 
 LEVELS = ("active", "trial", "backlog")
@@ -30,7 +30,7 @@ def vendor_dir(item):
     repo = repo_name(item)
     if item["source"] != "github" or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo, re.ASCII):
         raise Error("请输入 GitHub 仓库")
-    return VENDOR / repo.replace("/", "__")
+    return vendor_path() / repo.replace("/", "__")
 
 
 def skill_roots(item):
@@ -211,7 +211,7 @@ def review(_args, rows):
     if upstream:
         print("查看差异后运行 `starhub bump <仓库>`。")
 
-    usage = jsonl(HOME / "usage.jsonl")
+    usage = jsonl(state_path("usage.jsonl"))
     count = Counter(row["id"] for row in usage)
     last = {}
     for row in usage:

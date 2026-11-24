@@ -9,7 +9,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 HOME = Path(os.environ.get("STARHUB_HOME") or Path.home() / ".starhub").expanduser().resolve()
-VENDOR = Path(os.environ.get("STARHUB_VENDOR") or HOME / "vendor").expanduser()
 LABELS = {"github": "GitHub", "xhs": "小红书", "bili": "B站"}
 XHS_ACTIONS = ("收藏", "点赞")
 SETUP_HINT = "还没有设置。运行：starhub setup"
@@ -23,8 +22,16 @@ def today():
     return dt.date.today().isoformat()
 
 
-def now():
-    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+def now(timespec="seconds"):
+    return dt.datetime.now().astimezone().isoformat(timespec=timespec)
+
+
+def state_path(name):
+    return HOME / "state" / name
+
+
+def vendor_path():
+    return Path(os.environ.get("STARHUB_VENDOR") or state_path("vendor")).expanduser()
 
 
 def date(value):
@@ -49,8 +56,9 @@ def write(name, text):
 
 @contextmanager
 def writing():
-    HOME.mkdir(parents=True, exist_ok=True)
-    with (HOME / ".lock").open("a+", encoding="utf-8") as file:
+    path = state_path(".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as file:
         try:
             if os.name == "nt":
                 import msvcrt
@@ -65,7 +73,7 @@ def writing():
 
 
 def config(required=True):
-    path = HOME / "config.json"
+    path = state_path("config.json")
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     if required:
@@ -74,7 +82,7 @@ def config(required=True):
 
 
 def put_config(data):
-    write("config.json", json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    write(state_path("config.json"), json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def jsonl(path):
@@ -85,6 +93,16 @@ def jsonl(path):
 
 def put_rows(name, rows):
     write(name, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
+
+
+def append_text(path, text):
+    existing = path.read_bytes().decode("utf-8") if path.exists() else ""
+    separator = "\n" if existing and not existing.endswith("\n") else ""
+    write(path, existing + separator + text)
+
+
+def wiki_log(op, title):
+    append_text(HOME / "wiki/log.md", f"\n## [{today()}] {op} | {' '.join(title.split())}\n")
 
 
 def raw_items():
@@ -111,24 +129,40 @@ def xhs_actions(row):
 
 def put_raw(rows, sources=LABELS):
     for source in sources:
+        path = HOME / f"raw/{source}.jsonl"
+        previous = {row["id"]: row for row in jsonl(path)}
         records = [raw_record(rows[key]) for key in sorted(rows) if rows[key]["source"] == source]
-        put_rows(f"raw/{source}.jsonl", records)
+        changes = [row for row in records if row != previous.get(row["id"])]
+        if changes:
+            append_text(path, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in changes))
 
 
 def cache_path(item):
     name = quote(item["id"].split(":", 1)[1], safe="")
     if re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", name):
         name = f"%{ord(name[0]):02X}" + name[1:]
-    return HOME / "cache" / item["source"] / f"{name}.md"
+    return HOME / "raw" / "cache" / item["source"] / f"{name}.md"
 
 
 def visible(row):
     return row["status"] != "hidden" and not row["removed"]
 
 
+def event_time(row):
+    try:
+        stamp = dt.datetime.fromisoformat(row.get("at", ""))
+        return stamp.astimezone()
+    except (TypeError, ValueError):
+        return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+
+def curation():
+    return sorted(jsonl(state_path("curation.jsonl")), key=event_time)
+
+
 def append_curation(op, **values):
-    path = HOME / "curation.jsonl"
-    put_rows(path, [*jsonl(path), {"at": now(), "by": "user", "op": op, **values}])
+    event = {"at": now("microseconds"), "by": "user", "op": op, **values}
+    append_text(state_path("curation.jsonl"), json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def lookup(q, rows):

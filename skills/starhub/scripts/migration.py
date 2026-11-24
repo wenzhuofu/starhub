@@ -5,15 +5,57 @@ from pathlib import Path
 
 import catalog
 import library as lib
+import notes
 import taxonomy as tax
 import tools
 
+LEGACY_STATE = ("config.json", "usage.jsonl", "vendor", "labels.jsonl", "taxonomy.json", "curation.jsonl",
+                "items.v1.jsonl")
+
+
+def needs_migration():
+    return any((lib.HOME / name).exists() for name in ("items.jsonl", "cache", *LEGACY_STATE))
+
+
+def relocate_legacy():
+    pairs = [(lib.HOME / name, lib.state_path(name)) for name in LEGACY_STATE]
+    pairs.append((lib.HOME / "cache", lib.HOME / "raw/cache"))
+    existing = [(old, new) for old, new in pairs if old.exists()]
+    for old, new in existing:
+        if not all(path.resolve().is_relative_to(lib.HOME) for path in (old, new)):
+            raise lib.Error(f"迁移路径超出收藏库：{old.name}")
+        empty_directory = old.is_dir() and new.is_dir() and not any(new.iterdir())
+        if new.exists() and not empty_directory:
+            raise lib.Error(f"新旧路径都有数据，请先核对：{new.relative_to(lib.HOME)}")
+    for old, new in existing:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        if new.is_dir():
+            new.rmdir()
+        os.replace(old, new)
+    return len(existing)
+
+
+def relocate_round_one_notes():
+    wiki = lib.HOME / "wiki"
+    for path in wiki.glob("*%2F*.md"):
+        fields, _, _ = notes.split(path.read_text(encoding="utf-8"))
+        topic = fields.get("topic", "")
+        parts = topic.split("/")
+        if (len(parts) < 2 or path.stem != topic.replace("/", "%2F")
+                or not all(map(tax.valid_name, parts))
+                or parts[0].casefold() in ("index", "log", "insights")):
+            continue
+        target = wiki / notes.filename(topic)
+        if target.exists() or not target.resolve().is_relative_to(wiki.resolve()):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(path, target)
 
 def import_items(entries):
     rows = lib.raw_items()
     keys = {key.casefold() if row["source"] == "github" else key: key for key, row in rows.items()}
     labels = catalog.labels()
-    curation_path = lib.HOME / "curation.jsonl"
+    curation_path = lib.state_path("curation.jsonl")
     events = lib.jsonl(curation_path)
     hidden = {event.get("id") for event in events if event.get("op") in ("hide", "unhide")}
     changed, new_labels, new_events, added = set(), [], [], 0
@@ -42,7 +84,7 @@ def import_items(entries):
             hidden.add(key)
     lib.put_raw(rows, sorted(changed))
     if new_labels:
-        path = lib.HOME / "labels.jsonl"
+        path = lib.state_path("labels.jsonl")
         lib.put_rows(path, [*lib.jsonl(path), *new_labels])
     if new_events:
         lib.put_rows(curation_path, [*events, *new_events])
@@ -50,19 +92,23 @@ def import_items(entries):
 
 
 def migrate_v2(_args):
-    old, backup = lib.HOME / "items.jsonl", lib.HOME / "items.v1.jsonl"
+    moved = relocate_legacy()
+    if moved:
+        relocate_round_one_notes()
+    old, backup = lib.HOME / "items.jsonl", lib.state_path("items.v1.jsonl")
+    if old.exists() or moved:
+        lib.put_config({**lib.config(required=False), "version": 2})
     if not old.exists():
-        print("v1 收藏已迁移。" if backup.exists() else "没有需要迁移的 v1 收藏。")
+        print("已迁移收藏库目录。" if moved else "v1 收藏已迁移。" if backup.exists() else "没有需要迁移的 v1 收藏。")
         return
     if backup.exists() and old.read_bytes() != backup.read_bytes():
         raise lib.Error("items.jsonl 和 items.v1.jsonl 内容不同，请先核对备份")
     added = import_items(lib.jsonl(old))
-    lib.put_config({**lib.config(required=False), "version": 2})
     if backup.exists():
         old.unlink()
     else:
         os.replace(old, backup)
-    print(f"已迁移 {added} 条，原文件已备份为 items.v1.jsonl")
+    print(f"已迁移 {added} 条，原文件已备份为 state/items.v1.jsonl")
 
 
 def migrate_catalog(args):
@@ -92,7 +138,7 @@ def migrate_catalog(args):
                             tool=json.loads(json.dumps(tool, default=str))))
     added = import_items(entries)
     if args.usage:
-        path = lib.HOME / "usage.jsonl"
+        path = lib.state_path("usage.jsonl")
         usage = lib.jsonl(path)
         counts = Counter((row["date"], row["id"], row["note"]) for row in usage)
         for row in lib.jsonl(Path(args.usage)):

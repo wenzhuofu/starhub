@@ -274,8 +274,16 @@ class OpenCLI:
         if error == "request" or result.get("stalled"):
             raise Error(f"小红书{via}页未继续加载，已停止；下次同步可从已记录的位置继续")
 
-    def bili_saved(self, known, first, full):
+    def bili_saved(self, known, first, full, history=None):
         uid = self.uid()
+        legacy = history is None
+        if history is None:
+            history = {}
+        account = hashlib.sha256(str(uid).encode("utf-8")).hexdigest()
+        if history.get("account") != account:
+            history.clear()
+            history["account"] = account
+        progress = history.setdefault("folders", {})
         browser = ("browser", "--session", f"starhub-{uuid.uuid4().hex}", "--window", "background")
         try:
             self.call(*browser, "open", "https://www.bilibili.com/")
@@ -287,20 +295,33 @@ class OpenCLI:
             key = "".join(raw[i] for i in WBI_ORDER)[:32]
             folders = self.bili_get(browser, "/x/v3/fav/folder/created/list-all", key, up_mid=uid)
             for folder in objects(folders["list"] or []):
-                for page in itertools.count(1):
-                    data = self.bili_get(browser, "/x/v3/fav/resource/list", key,
-                                         media_id=int(folder["id"]), pn=page, ps=20)
-                    batch = objects(data["medias"] or [])
-                    rows = [bili_item(row, folder["title"]) for row in batch if row.get("bvid")]
-                    yield from rows
-                    if not batch or not data["has_more"]:
-                        break
-                    if not full and ((first and page >= 10) or
-                                     (rows and all(known(row["id"]) for row in rows))):
-                        break
+                state = progress.setdefault(str(folder["id"]), {"done": True} if legacy and not first else {})
+                if full:
+                    state.clear()
+                yield from self.bili_folder(browser, key, folder, state, known, full)
         finally:
             with suppress(Error):
                 self.call(*browser, "close")
+
+    def bili_folder(self, browser, key, folder, state, known, full):
+        resume, done = state.get("next", 1), state.get("done", False)
+        page, requests = 1, 0
+        while full or done or requests < 10:
+            data = self.bili_get(browser, "/x/v3/fav/resource/list", key,
+                                 media_id=int(folder["id"]), pn=page, ps=20)
+            batch = objects(data["medias"] or [])
+            rows = [bili_item(row, folder["title"]) for row in batch if row.get("bvid")]
+            yield from rows
+            requests += 1
+            if not batch or not data["has_more"]:
+                state.update(next=page + 1, done=True)
+                break
+            if not done and page >= resume:
+                state.update(next=page + 1, done=False)
+            known_page = rows and all(known(row["id"]) for row in rows)
+            if not full and known_page and done:
+                break
+            page = resume if not full and known_page and page < resume else page + 1
 
     def bili_get(self, browser, path, key="", **params):
         if key:
