@@ -168,6 +168,11 @@ a { color: inherit; }
 .note a:hover { text-decoration-color: currentColor; }
 .note code { padding: 1px 5px; border-radius: 4px; background: var(--paper-2); font: 0.875em/1.5 var(--mono); }
 .note strong { font-weight: 650; }
+.mdtable { margin: 14px 0 0; overflow-x: auto; }
+.mdtable table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; line-height: 1.6; }
+.mdtable th { padding: 8px 10px; text-align: left; font-weight: 500; font-size: 0.8125rem; color: var(--ink-3); border-bottom: 1px solid var(--rule-strong); }
+.mdtable td { padding: 9px 10px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+.mdtable td:last-child { white-space: nowrap; }
 .cite { font-size: 0.72em; line-height: 0; vertical-align: 0.5em; margin-left: 1px; }
 .cite a { padding: 0 2px; color: var(--seal-fg); font-weight: 650; text-decoration: none; border-radius: 3px; }
 .cite a:hover { background: color-mix(in srgb, var(--seal-fg) 12%, transparent); }
@@ -400,10 +405,21 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   }
   function markdown(md) {
     const out = [], lines = String(md || '').replace(/\r/g, '').split('\n');
-    let list = null, para = [], section = '';
+    let list = null, para = [], section = '', table = null;
     const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
     const flushList = () => { if (list) { out.push(list.html + '</' + list.tag + '>'); list = null; } };
+    const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    const flushTable = () => {
+      if (!table) return;
+      const [head, ...rest] = table;
+      const body = rest.filter((r) => !/^\s*\|?\s*:?-{2,}/.test(r));
+      out.push('<div class="mdtable"><table><thead><tr>' + cells(head).map((c) => '<th>' + inline(c) + '</th>').join('') + '</tr></thead><tbody>' +
+        body.map((r) => '<tr>' + cells(r).map((c) => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>');
+      table = null;
+    };
     for (const line of lines) {
+      if (/^\s*\|.*\|\s*$/.test(line)) { flushPara(); flushList(); (table ||= []).push(line); continue; }
+      flushTable();
       const h = /^(#{1,3})\s+(.*)$/.exec(line);
       const ul = /^\s*[-*]\s+(.*)$/.exec(line);
       const ol = /^\s*(\d+)[.)]\s+(.*)$/.exec(line);
@@ -421,7 +437,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
       } else if (!line.trim()) { flushPara(); flushList(); }
       else { flushList(); para.push(line.trim()); }
     }
-    flushPara(); flushList();
+    flushPara(); flushList(); flushTable();
     return out.join('');
   }
 
