@@ -236,7 +236,10 @@ def cli():
     parsers["topic"].add_argument("--items", type=int, default=20)
     parsers["compile"].add_argument("--all", action="store_true")
     parsers["lint"].add_argument("--fix", action="store_true")
-    parsers["classify"].add_argument("--pending", action="store_true", help="重看已归为待定的收藏")
+    classify_mode = parsers["classify"].add_mutually_exclusive_group()
+    classify_mode.add_argument("--pending", action="store_true", help="重看已归为待定的收藏")
+    classify_mode.add_argument("--all", action="store_true", help="分批重看所有可见的知识收藏")
+    parsers["classify"].add_argument("--offset", type=int, default=0, metavar="跳过条数")
     for name in ("classify", "find"):
         parsers[name].add_argument("--source", choices=LABELS, metavar="来源")
     for name, default in (("classify", 50), ("find", 20)):
@@ -276,6 +279,8 @@ def main():
             raise Error(f"条数须为 0–{queries.ROW_LIMIT} 的整数")
     if getattr(args, "bodies", 0) < 0:
         raise Error("--bodies 须为非负整数")
+    if getattr(args, "offset", 0) < 0:
+        raise Error("--offset 须为非负整数")
     with lib.writing():
         if args.func is not migration.migrate_v2 and migration.needs_migration():
             raise Error("发现旧版收藏库，请先运行 starhub migrate-v2")

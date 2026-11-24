@@ -15,7 +15,7 @@ INDEX = "tools/INDEX.md"
 INDEX_START, INDEX_END = "<!-- starhub:topics -->", "<!-- /starhub:topics -->"
 AGENTS_START, AGENTS_END = "<!-- starhub:begin -->", "<!-- starhub:end -->"
 ITEM_KEYS = ("id", "source", "via", "url", "author", "folder", "saved", "seen", "topic", "kind", "scene", "status")
-TOOL_KEYS = ("id", "url", "what", "when", "topic", "saved", "seen")
+TOOL_KEYS = ("id", "source", "url", "what", "when", "topic", "saved", "seen")
 
 
 def page_data(state, conn):

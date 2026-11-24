@@ -830,8 +830,9 @@ tools: [{tools}]
         self.assertEqual(set(item), {"id", "source", "via", "url", "title", "author", "folder", "saved", "seen",
                                      "topic", "kind", "scene", "status"})
         self.assertEqual((item["id"], item["title"]), ("xhs:walk", "西湖步行路线"))
-        self.assertEqual(set(tool), {"id", "title", "url", "what", "when", "topic", "type", "level", "conflicts",
+        self.assertEqual(set(tool), {"id", "source", "title", "url", "what", "when", "topic", "type", "level", "conflicts",
                                      "saved", "seen"})
+        self.assertEqual(tool["source"], "github")
         self.assertEqual(tool["id"], "github:dev/saved")
         topic = next(entry for entry in page["topics"] if entry["id"] == "旅行/杭州")
         self.assertEqual(set(topic), {"id", "name", "parent", "summary", "size", "updated", "related", "note", "owner", "coverage"})
@@ -1004,6 +1005,42 @@ tools: [{tools}]
         note = notes.load(library.curation())["旅行/杭州"]
         self.assertEqual(notes.related_ids(note["fields"]["related"]), ["旅行/上海"])
         self.assertEqual(notes.inline_list(note["fields"]["tools"]), ["dev/saved", "dev/pending"])
+
+    def test_classify_all_pages_stably_and_relabels_protect_user_fields(self):
+        self.apply_taxonomy("旅行", "旅行/杭州", "出行")
+        self.put(row("xhs:classified", status="ok", topic="旅行/杭州", saved="2026-11-24"),
+                 row("bili:old", status="ok", topic="旅行", saved="2026-11-01"),
+                 row("xhs:new"), row("xhs:hidden", status="archived"),
+                 row("bili:removed", removed="2026-11-24"), row("github:dev/tool"))
+        self.command("curate", "rename", "旅行", "假日旅行")
+        self.command("set", "xhs:classified", "scene", "给家人安排西湖半日游")
+        _, first = self.command("classify", "--all", "--limit", "2")
+        self.assertIn("全部知识收藏（3）", first)
+        self.assertIn("--offset 2 --limit 2", first)
+        self.assertEqual([line.split()[0] for line in first.splitlines() if line.startswith(("xhs:", "bili:"))],
+                         ["xhs:classified", "bili:old"])
+        self.assertEqual(self.label("bili:old", "出行", kind="清单")[0], 0)
+        self.assertEqual(self.label("xhs:classified", "出行", kind="清单", entities=["地点:杭州"],
+                                    scene="给周末同事推荐西湖路线")[0], 0)
+        _, second = self.command("classify", "--all", "--limit", "2", "--offset", "2")
+        self.assertEqual([line for line in second.splitlines() if line.startswith(("xhs:", "bili:", "github:"))],
+                         ["xhs:new  待定  —  new"])
+        self.assertNotIn("下一批", second)
+        rows = catalog.state()[0]
+        self.assertEqual(rows["xhs:classified"]["scene"], "给家人安排西湖半日游")
+        self.assertEqual((rows["xhs:classified"]["topic"], rows["xhs:classified"]["kind"],
+                          rows["xhs:classified"]["entities"]), ("出行", "清单", ["地点:杭州"]))
+
+    def test_label_rejects_generic_scenes_and_accepts_specific_ones(self):
+        self.apply_taxonomy("求职")
+        self.put(row("xhs:interview"))
+        bad = [dict(id="xhs:interview", topic="求职", kind="经验", entities=[], scene=scene)
+               for scene in ("查找面经做法", "了解岗位内容。", "查看面试资料", "查找招聘信息", "了解复盘方法")]
+        good = {**bad[0], "scene": "准备蚂蚁风控策略一面"}
+        code, output = self.command("label", "-", stdin=json.dumps([*bad, good]))
+        self.assertEqual(code, 1)
+        self.assertEqual(output.count("请写出具体情境和对象"), len(bad))
+        self.assertEqual(catalog.state()[0]["xhs:interview"]["scene"], good["scene"])
 
     def test_curate_requeues_renamed_and_merged_topics_with_stable_batches(self):
         self.apply_taxonomy("出门", "出门/周末", "出门/里弄", "合并", "合并/散步")

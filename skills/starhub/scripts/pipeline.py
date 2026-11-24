@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -80,6 +81,8 @@ def validate_label(entry, rows, topics):
         value = entry.get("scene")
         if not isinstance(value, str) or not 1 <= len(value.strip()) <= 20 or len(value.strip().splitlines()) != 1:
             errors.append("scene 须为一行 1–20 字")
+        elif re.fullmatch(r"(查找|了解|查看).*(做法|内容|资料|信息|方法)[。！？!?]?", value.strip()):
+            errors.append("scene 过于笼统，请写出具体情境和对象，如「准备蚂蚁风控策略一面」")
     return errors
 
 
@@ -143,15 +146,24 @@ def classify(args, state):
     print("主题：" + "、".join([tax.PENDING, *shown]))
     print("类型：" + "、".join(tax.KINDS))
     print("实体类型：" + "、".join(tax.ENTITY_TYPES))
-    rows = (row for row in state[0].values() if (row["status"] == "new" or args.pending and row["topic"] == tax.PENDING)
+    rows = (row for row in state[0].values()
+            if (row["source"] != "github" if args.all else
+                row["status"] == "new" or args.pending and row["topic"] == tax.PENDING)
             and lib.visible(row)
             and (not args.source or row["source"] == args.source))
-    newest = sorted(rows, key=lambda row: (row.get("needs_relabel", False), row["saved"], row["seen"], row["id"]),
+    newest = sorted(rows, key=lambda row: (not args.all and row.get("needs_relabel", False),
+                                          row["saved"], row["seen"], row["id"]),
                     reverse=True)
-    lib.wiki_log("classify", f"本批 {min(len(newest), args.limit)} 条，待归类 {len(newest)} 条")
-    print(f"\n# 待归类（{len(newest)}）")
-    for row in newest[:args.limit]:
+    end = args.offset + args.limit
+    batch = newest[args.offset:end]
+    title = "全部知识收藏" if args.all else "待归类"
+    lib.wiki_log("classify", f"本批 {len(batch)} 条，{title} {len(newest)} 条")
+    print(f"\n# {title}（{len(newest)}）")
+    for row in batch:
         print(queries.l0(row))
+    if args.all and batch and end < len(newest):
+        source = f" --source {args.source}" if args.source else ""
+        print(f"\n下一批：starhub classify --all --offset {end} --limit {args.limit}{source}")
 
 
 def compile_topic(args, state):
