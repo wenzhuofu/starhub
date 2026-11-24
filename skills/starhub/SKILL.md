@@ -16,7 +16,7 @@ argument-hint: "<任务> | 同步 | 整理 | 打开 | 体检 | 复盘"
 | 输入 | 做什么 |
 |---|---|
 | `同步` | 运行 `starhub sync`，再做「整理」 |
-| `整理` | 读 `references/ingest.md`，把新收藏归到主题，并更新主题笔记 |
+| `整理` | 读 `references/ingest.md`，把新收藏归到主题；要写笔记时再读 `references/compile.md` |
 | `打开` | 运行 `starhub page --open`，告诉用户网页路径。用户想编辑知识库的话，告诉他可以用 Obsidian 打开 `~/.starhub` |
 | `体检` | 运行 `starhub lint`，按每一项的建议修，修之前先说明要改什么 |
 | `复盘` | 运行 `starhub review` 和 `starhub lint`，把两份结果给用户，再逐项问怎么处理 |

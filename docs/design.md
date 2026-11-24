@@ -113,6 +113,14 @@ search USING fts5(id UNINDEXED, clean_title, scene, excerpt, topic, entities, to
 | ③ 编译 | agent，按主题增量 | `compile` → `note <主题> <文件>` | 新成员的 L1，加最多 5 条代表作的 L2 | 主题笔记、index.md 对应的行、log 条目 |
 | ④ 连接 | 随 ③ 一起 | 笔记 frontmatter | 同上 | related 主题；推荐的工具进工具架的待分拣 |
 
+### 3.0 正文补全（同步的一部分）
+
+- `sync` 每次最多给 20 条还没有正文的收藏抓取正文（`--bodies N` 可改，0 表示跳过），按收藏时间从新到旧。
+- 请求之间随机间隔 3 到 6 秒；遇到限流（429/461）或风控就停在当次，下次接着补。
+- 正文缓存到 `raw/cache/<source>/<id>.md`，`excerpt` 取正文前 300 字。同一条失败 3 次后就不再尝试。
+- 小红书用 OpenCLI 读笔记正文；B站缺简介的条目读视频简介。
+- `status` 显示正文进度，比如「正文 120 / 461」。
+
 ### 3.1 规整：去标题党（确定性，有测试覆盖）
 
 - 去掉 emoji、#话题、【】里的营销词。
@@ -156,7 +164,15 @@ tools: []
 1. [干净标题](链接) — 这一条贡献了什么
 ```
 
-出处只写标题、链接和贡献。平台和日期由网页根据链接补上。
+出处只写标题、链接和贡献。平台和日期由网页根据链接补上。`updated`、`sources`、`coverage`（有正文的成员 / 全部成员）由 `note` 自动写入。
+
+写法规则见 `skills/starhub/references/compile.md`。`note` 做以下机械检查，任何一项不合格都拒收并说明原因：
+
+- 正文出现禁用词：现有摘录、仅凭标题、无法证明、无法确认、本笔记、当前资料、提供主题与场景入口、补充比较角度、提供复盘线索、值得一看。
+- 要点里的条目没有出处编号，或者编号超出出处列表的范围。
+- 两条出处的说明完全相同。
+
+`compile --all` 列出全部主题，用于整体重写。`compile <主题>` 给出：全部成员的 L1（标出是否有正文）、最多 8 条代表作的 L2（有正文的优先，再按时间从新到旧）、这篇笔记现在的内容，以及 coverage。
 
 ### 3.5 wiki/log.md
 
@@ -194,6 +210,8 @@ tools: []
 - 成员变了但笔记没更新：和 `notes.json` 里的成员快照对比；
 - 出处引用了已经下架（removed）的收藏；
 - 用户维护的笔记有了新成员；
+- 成员的正文状态变了，比如新补了正文（视为过期，需要重新编译）；
+- 同一句出处说明在 3 篇以上的笔记里出现（套话）；
 - frontmatter 缺字段；
 - 「待定」积压超过 50 条。
 
@@ -206,7 +224,7 @@ tools: []
 ```json
 {"generated":"…","last_sync":"…","wiki_dir":"C:\\Users\\…\\.starhub\\wiki",
  "topics":[{"id":"旅行/杭州","name":"杭州","parent":"旅行","summary":"…","size":12,"updated":"…",
-            "related":["旅行/上海"],"owner":"ai","note":"<markdown 正文，去掉 frontmatter>"}],
+            "related":["旅行/上海"],"owner":"ai","coverage":"12/40","note":"<markdown 正文，去掉 frontmatter>"}],
  "items":[{"id":"…","source":"xhs","via":["收藏"],"url":"…","title":"干净标题","author":"…","folder":"…",
            "saved":"…","seen":"…","topic":"旅行/杭州","kind":"攻略","scene":"…","status":"ok"}],
  "tools":[{"id":"github:…","title":"owner/repo","url":"…","what":"…","when":"…","topic":"…",

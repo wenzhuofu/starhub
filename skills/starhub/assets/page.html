@@ -507,7 +507,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     const sep = wiki.includes('\\') ? '\\' : '/';
     const obsidian = wiki && t.note ? 'obsidian://open?path=' + encodeURIComponent(wiki + sep + t.id.split('/').join(sep) + '.md') : '';
     let html = crumbs + '<h1>' + esc(t.name) + '</h1><p class="meta"><span>' + fmtN(t.size ?? sizeOf(t)) + ' 条收藏</span>' +
-      (t.updated ? '<span>' + esc(cnDate(t.updated)) + '更新</span>' : '') + (t.owner === 'user' ? '<span>由你维护</span>' : '') +
+      (t.updated ? '<span>' + esc(cnDate(t.updated)) + '更新</span>' : '') + (t.coverage ? '<span title="有正文的收藏 / 全部收藏">' + esc(String(t.coverage).replace('/', ' / ')) + ' 有正文</span>' : '') +
+      (t.owner === 'user' ? '<span>由你维护</span>' : '') +
       (obsidian ? '<a href="' + esc(obsidian) + '">在 Obsidian 中打开</a>' : '') + '</p>';
     if (t.summary) html += '<p class="lead">' + esc(t.summary) + '</p>';
     html += t.note ? '<div class="note">' + markdown(t.note) + '</div>' : '<p class="lead pending">这个主题还没有笔记。下次整理时会根据下面的收藏写出来。</p>';
