@@ -438,7 +438,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
       if (!state.source || r.it.source === state.source) { if (r.it.topic) byTopic.set(r.it.topic, (byTopic.get(r.it.topic) || 0) + 1); qSourceAll++; }
     });
 
-    $('sourceTabs').innerHTML = chip('全部', qTopicAll, !state.source, 'data-source=""') +
+    // one source only: the tabs would just repeat the total
+    $('sourceTabs').innerHTML = present.length < 2 ? '' : chip('全部', qTopicAll, !state.source, 'data-source=""') +
       present.map((s) => chip(label(s), bySource.get(s) || 0, state.source === s, 'data-source="' + esc(s) + '"')).join('');
 
     const narrowed = ts.length > 0 || !!state.source;
