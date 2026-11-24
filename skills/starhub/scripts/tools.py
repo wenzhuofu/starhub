@@ -193,7 +193,7 @@ def review(_args, rows):
     print(f"# starhub 复盘 {today()}")
     pending = [p for p in rows.values() if p["status"] == "new" or
                "AI 草拟" in p.get("tool", {}).get("notes", "")]
-    section(f"待确认的新收藏（{len(pending)}）", [f"- `{p['id']}` {p['what'] or p['title']}" for p in pending])
+    section(f"待确认的新收藏（{len(pending)}）", [f"- `{p['id']}` {p['what'] or p['title']}" for p in pending[:10]])
     cfg = config(required=False)
     if cfg["github"] and "github" in cfg["sources"]:
         try:

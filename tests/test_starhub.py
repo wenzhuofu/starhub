@@ -73,6 +73,14 @@ class StarhubTest(unittest.TestCase):
     def configure(self, sources_arg="github"):
         return self.command("setup", "--github", "tester", "--sources", sources_arg)
 
+    def opencli_result(self, args, body):
+        if args[0] in ("doctor", "browser"):
+            if "-f" in args:
+                body = self.fixture["unknown_format_option"]
+        else:
+            self.assertEqual(args[-2:], ("-f", "json"))
+        return subprocess.CompletedProcess(args, body.get("error", {}).get("exitCode", 0), json.dumps(body), "")
+
     def test_status_and_setup(self):
         with self.assertRaisesRegex(library.Error, "还没有设置"):
             self.command("status")
@@ -83,8 +91,24 @@ class StarhubTest(unittest.TestCase):
         library.put_config({**cfg, "extra": {"keep": True}})
         self.command("setup", "--sources", "github,xhs")
         self.assertEqual(library.config(), {**cfg, "sources": ["github", "xhs"], "extra": {"keep": True}})
+        self.put(row("bili:BV1", status="ok"), row("xhs:one"), row("xhs:archived", status="archived"))
         self.assertEqual(self.command("status")[1].splitlines()[:3],
-                         ["0 条收藏：GitHub 0，小红书 0，B站 0", "待整理 0 条", "上次同步 暂无"])
+                         ["2 条收藏：GitHub 0，小红书 1", "待整理 1 条", "上次同步 暂无"])
+
+    def test_setup_without_github(self):
+        with patch.object(cli, "gh", return_value="") as gh:
+            self.assertEqual(self.command("setup", "--sources", "xhs,bili"), (0, "已启用 小红书、B站\n"))
+            self.assertEqual(library.config()["github"], "")
+            self.command("setup", "--github", "tester")
+            self.assertEqual(library.config()["github"], "tester")
+            gh.assert_not_called()
+            self.command("setup", "--sources", "github")
+            self.assertEqual(library.config()["github"], "tester")
+            gh.assert_not_called()
+            library.put_config({**library.config(), "github": ""})
+            with self.assertRaisesRegex(library.Error, "需要 GitHub 用户名"):
+                self.command("setup")
+            gh.assert_called_once_with("api", "user", "--jq", ".login")
 
     def test_github_incremental_then_full(self):
         self.configure()
@@ -139,9 +163,8 @@ class StarhubTest(unittest.TestCase):
 
         def runner(exe, *args):
             commands.append(args)
-            self.assertEqual(args[-2:], ("-f", "json"))
             body = self.fixture[f"{args[0]}_{args[1]}"]
-            return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+            return self.opencli_result(args, body)
 
         with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
             code, text = self.command("sync")
@@ -162,13 +185,33 @@ class StarhubTest(unittest.TestCase):
         self.assertIn("xsec_token=A%2B%3D&xsec_source=pc_user", output)
         self.assertIn("西湖步行路线", output)
 
+    def test_xhs_incremental_expands_only_the_list_without_known_ids(self):
+        self.configure("xhs")
+        library.put_config({**library.config(), "synced_sources": ["xhs"]})
+        self.put(row("xhs:saved-22"), row("xhs:liked-5", via="点赞"))
+        calls = []
+
+        def runner(_exe, *args):
+            command, limit = args[1], int(args[3])
+            calls.append((command, limit))
+            sample = self.fixture[f"xiaohongshu_{command}"]["data"][0]
+            data = [{**sample, "id": f"{command}-{i}"} for i in range(min(limit, 25))]
+            return self.opencli_result(args, {"ok": True, "data": data})
+
+        with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
+            self.assertIn("新增 43（收藏 24，点赞 19）", self.command("sync")[1])
+            self.assertEqual(calls, [("saved", 20), ("saved", 100), ("liked", 20)])
+            self.assertIn("xhs:saved-24", library.items())
+            self.assertNotIn("xhs:liked-24", library.items())
+            calls.clear()
+            self.assertIn("新增 5（收藏 0，点赞 5）", self.command("sync", "--full")[1])
+            self.assertEqual(calls, [("saved", 100), ("liked", 100)])
+
     def test_opencli_bili_all_folders_and_subtitles(self):
         self.configure("bili")
         pages, sessions = [], set()
 
-        def runner(exe, *args):
-            cmd = args[:-2]
-            self.assertEqual(args[-2:], ("-f", "json"))
+        def runner(exe, *cmd):
             if cmd[0] == "bilibili":
                 body = self.fixture[f"bilibili_{cmd[1]}"]
             else:
@@ -201,7 +244,7 @@ class StarhubTest(unittest.TestCase):
                             batch["has_more"] = pair == (111, 1)
                             if pair != (111, 1):
                                 batch["medias"][0]["bvid"] = f"BV{pair[0]}{pair[1]}"
-            return subprocess.CompletedProcess(args, 0, json.dumps(body), "")
+            return self.opencli_result(cmd, body)
 
         with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
             _, text = self.command("sync")
@@ -258,7 +301,7 @@ class StarhubTest(unittest.TestCase):
                 body = self.fixture["auth_required"]
             else:
                 body = self.fixture["bilibili_me"]
-            return subprocess.CompletedProcess(args, body.get("error", {}).get("exitCode", 0), json.dumps(body), "")
+            return self.opencli_result(args, body)
 
         with patch.object(sources.GitHub, "stars", return_value=[]) as gh_api:
             with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
@@ -358,6 +401,13 @@ class StarhubTest(unittest.TestCase):
             with self.assertRaises(library.Error):
                 self.command("bump", "legacy", "abcd123")
         self.assertEqual(library.items()["github:dev/legacy"]["tool"]["ref"], "0011223")
+
+    def test_review_counts_all_pending_and_lists_at_most_ten(self):
+        self.configure("xhs")
+        self.put(*(row(f"xhs:note-{i:02d}") for i in range(15)))
+        report = self.command("review")[1]
+        pending = report.split("## 待确认的新收藏（15）\n")[1].split("\n## ")[0]
+        self.assertEqual(len(pending.strip().splitlines()), 10)
 
     def test_migrate_catalog_and_usage(self):
         catalog = FIXTURES / "catalog.toml"

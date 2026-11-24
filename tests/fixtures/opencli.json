@@ -138,6 +138,14 @@
       "extensionConnected": true
     }
   },
+  "unknown_format_option": {
+    "ok": false,
+    "error": {
+      "code": "commander.unknownOption",
+      "message": "error: unknown option '-f'",
+      "exitCode": 2
+    }
+  },
   "auth_required": {
     "ok": false,
     "error": {

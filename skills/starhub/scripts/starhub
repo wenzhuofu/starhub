@@ -28,7 +28,7 @@ def now():
 def status(_args, rows):
     cfg = lib.config()
     counts = Counter(row["source"] for row in rows.values() if row["status"] != "archived")
-    by_source = "，".join(f"{name} {counts[key]}" for key, name in LABELS.items())
+    by_source = "，".join(f"{name} {counts[key]}" for key, name in LABELS.items() if key in cfg["sources"])
     last = cfg["last_sync"][:16].replace("T", " ") or "暂无"
     print(f"{sum(counts.values())} 条收藏：{by_source}")
     print_pending(rows)
@@ -41,12 +41,15 @@ def setup(args, _rows):
         cfg["sources"] = list(dict.fromkeys(source.strip() for source in args.sources.split(",")))
         if any(source not in LABELS for source in cfg["sources"]):
             raise Error("来源可选 github、xhs、bili，用逗号分隔")
-    login = (args.github or cfg["github"] or gh("api", "user", "--jq", ".login")).strip()
-    if not login:
-        raise Error("需要 GitHub 用户名：starhub setup --github <用户名>")
+    login = (args.github or cfg["github"]).strip()
+    if "github" in cfg["sources"] and not login:
+        login = gh("api", "user", "--jq", ".login").strip()
+        if not login:
+            raise Error("需要 GitHub 用户名：starhub setup --github <用户名>")
     cfg["github"] = login
     lib.put_config(cfg)
-    print(f"GitHub 用户名 {login}，已启用 " + "、".join(LABELS[key] for key in cfg["sources"]))
+    prefix = f"GitHub 用户名 {login}，" if login else ""
+    print(prefix + "已启用 " + "、".join(LABELS[key] for key in cfg["sources"]))
 
 
 def doctor(_args, _rows):
@@ -88,7 +91,7 @@ def sync(args, rows):
             if source == "github":
                 fetched = GitHub().saved(cfg["github"], lambda key: known(key.casefold()), args.full)
             elif source == "xhs":
-                fetched = OpenCLI(source).xhs_saved(100 if args.full or source not in synced else 20)
+                fetched = OpenCLI(source).xhs_saved(known, source not in synced, args.full)
             else:
                 fetched = OpenCLI(source).bili_saved(known, source not in synced, args.full)
             batch = list(fetched)

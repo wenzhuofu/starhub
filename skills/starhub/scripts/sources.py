@@ -119,7 +119,9 @@ class OpenCLI:
             raise Error("无法运行 OpenCLI，请检查安装") from exc
 
     def call(self, *args, empty=False):
-        result = self.run(*args, "-f", "json")
+        if args[0] in ("xiaohongshu", "bilibili"):
+            args += ("-f", "json")
+        result = self.run(*args)
         if empty and result.returncode == 66:
             return []
         try:
@@ -159,9 +161,14 @@ class OpenCLI:
             raise Error(LOGIN["bili"])
         return uid
 
-    def xhs_saved(self, limit):
+    def xhs_saved(self, known, first, full):
+        limit = 100 if first or full else 20
         for command, via in (("saved", "收藏"), ("liked", "点赞")):
-            for row in objects(self.call("xiaohongshu", command, "--limit", str(limit), empty=True)):
+            args = ("xiaohongshu", command, "--limit")
+            rows = objects(self.call(*args, str(limit), empty=True))
+            if limit == len(rows) == 20 and not any(known(f"xhs:{row['id']}") for row in rows):
+                rows = objects(self.call(*args, "100", empty=True))
+            for row in rows:
                 yield dict(id=f"xhs:{row['id']}", source="xhs", via=via, url=row["url"],
                            title=row["title"], author=row["author"], folder="", saved="",
                            meta=dict(likes=row.get("likes"), type=row.get("type")))
