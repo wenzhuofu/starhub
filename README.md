@@ -76,3 +76,7 @@ starhub migrate <catalog.toml> 从旧版目录迁移
 ## 致谢
 
 小红书和 B站的读取靠 [OpenCLI](https://github.com/jackwener/opencli) 完成。
+
+## 许可
+
+MIT
