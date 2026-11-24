@@ -5,7 +5,7 @@ import subprocess
 from collections import Counter
 from pathlib import Path
 
-from library import Error, HOME, VENDOR, config, jsonl, lookup, put_items, run, today
+from library import Error, HOME, VENDOR, append_curation, config, jsonl, lookup, run, today, visible
 from sources import GitHub, SOURCE_ERRORS, source_error
 
 LEVELS = ("active", "trial", "backlog")
@@ -133,7 +133,7 @@ def vendor_one(item):
 def vendor(args, rows):
     def eligible(item):
         kind = item.get("tool", {}).get("type", "")
-        return item["source"] == "github" and item["status"] != "archived" and ("skill" in kind or kind == "resource")
+        return item["source"] == "github" and visible(item) and ("skill" in kind or kind == "resource")
 
     targets = [lookup(q, rows) for q in args.q] if args.q else [p for p in rows.values() if eligible(p)]
     failed = 0
@@ -156,7 +156,7 @@ def remote_head(repo):
 def updates(rows):
     for item in rows.values():
         ref = item.get("tool", {}).get("ref")
-        if item["source"] != "github" or item["status"] == "archived" or not ref:
+        if item["source"] != "github" or not visible(item) or not ref:
             continue
         repo = repo_name(item)
         try:
@@ -178,10 +178,9 @@ def bump(args, rows):
     ref = args.sha or remote_head(repo_name(item))
     if not re.fullmatch(r"[0-9a-fA-F]{7,64}", ref):
         raise Error("请输入有效的提交 SHA")
-    item["tool"]["ref"] = ref
     if (directory / ".git").exists():
-        vendor_one(item)
-    put_items(rows)
+        vendor_one({**item, "tool": {**item["tool"], "ref": ref}})
+    append_curation("set", id=item["id"], field="tool.ref", value=ref)
     print(f"{repo_name(item)} ref → {ref[:7]}")
 
 
@@ -191,8 +190,8 @@ def review(_args, rows):
         print("\n".join(records) or empty)
 
     print(f"# starhub 复盘 {today()}")
-    pending = [p for p in rows.values() if p["status"] == "new" or
-               "AI 草拟" in p.get("tool", {}).get("notes", "")]
+    pending = [p for p in rows.values() if visible(p) and (p["status"] == "new" or
+               "AI 草拟" in p.get("tool", {}).get("notes", ""))]
     section(f"待确认的新收藏（{len(pending)}）", [f"- `{p['id']}` {p['what'] or p['title']}" for p in pending[:10]])
     cfg = config(required=False)
     if cfg["github"] and "github" in cfg["sources"]:
@@ -203,7 +202,7 @@ def review(_args, rows):
             if new:
                 print(f"- 另有 {len(new)} 个新 star 尚未同步：" + "，".join(new) + " → `starhub sync`")
             gone = [p["id"] for p in rows.values()
-                    if p["source"] == "github" and p["status"] != "archived" and p["id"].casefold() not in starred]
+                    if p["source"] == "github" and visible(p) and p["id"].casefold() not in starred]
             section(f"已取消 star（{len(gone)}）", [f"- `{key}` → `starhub set {key} status archived`" for key in gone])
         except SOURCE_ERRORS as exc:
             section("已取消 star", ["- " + source_error("github", exc)])
@@ -219,13 +218,14 @@ def review(_args, rows):
         last[row["id"]] = max(last.get(row["id"], ""), row["date"])
     date = dt.date.today()
     cutoff = (date - dt.timedelta(days=90)).isoformat()
-    idle = [p["id"] for p in rows.values() if p["status"] == "ok" and p.get("tool", {}).get("level") in
+    idle = [p["id"] for p in rows.values() if visible(p) and p["status"] == "ok" and p.get("tool", {}).get("level") in
             ("trial", "active") and p["saved"] < cutoff and last.get(p["id"], "") < cutoff]
     section(f"90 天未使用的试用或主力工具（{len(idle)}）",
             [f"- `{key}`（最近使用：{last.get(key, '从未')}）" for key in idle])
     section("使用最多", [f"- `{key}` × {n}（最近 {last[key]}）" for key, n in count.most_common(10)],
             "- 暂无使用记录")
     cutoff = (date - dt.timedelta(days=30)).isoformat()
-    old = sorted(p["id"] for p in rows.values() if p["status"] == "ok" and p["saved"] < cutoff and p["id"] not in count)
+    old = sorted(p["id"] for p in rows.values() if visible(p) and p["status"] == "ok"
+                 and p["saved"] < cutoff and p["id"] not in count)
     picks = random.Random(str(date.isocalendar()[:2]))
     section("值得回看", [f"- `{key}` {rows[key]['title']}" for key in picks.sample(old, min(3, len(old)))])

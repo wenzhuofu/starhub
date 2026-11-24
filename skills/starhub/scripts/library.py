@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 HOME = Path(os.environ.get("STARHUB_HOME") or Path.home() / ".starhub").expanduser().resolve()
 VENDOR = Path(os.environ.get("STARHUB_VENDOR") or HOME / "vendor").expanduser()
@@ -22,14 +23,26 @@ def today():
     return dt.date.today().isoformat()
 
 
+def now():
+    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def date(value):
+    try:
+        return dt.date.fromisoformat(str(value)[:10]).isoformat()
+    except ValueError:
+        return ""
+
+
 def write(name, text):
-    HOME.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=HOME, delete=False) as file:
+    target = HOME / name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", dir=target.parent, delete=False) as file:
         tmp = Path(file.name)
         try:
             file.write(text)
             file.close()
-            os.replace(tmp, HOME / name)
+            os.replace(tmp, target)
         finally:
             tmp.unlink(missing_ok=True)
 
@@ -57,7 +70,7 @@ def config(required=True):
         return json.loads(path.read_text(encoding="utf-8"))
     if required:
         raise Error(SETUP_HINT)
-    return {"version": 1, "github": "", "sources": ["github"], "last_sync": ""}
+    return {"version": 2, "github": "", "sources": ["github"], "last_sync": ""}
 
 
 def put_config(data):
@@ -74,17 +87,48 @@ def put_rows(name, rows):
     write(name, "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
 
 
-def items():
-    return {row["id"]: row for row in jsonl(HOME / "items.jsonl")}
+def raw_items():
+    return {row["id"]: row for source in LABELS for row in jsonl(HOME / f"raw/{source}.jsonl")}
+
+
+def raw_record(row):
+    via = row.get("via", [])
+    if isinstance(via, str):
+        via = [via] if via else []
+    via = xhs_actions(row) if row["source"] == "xhs" else list(dict.fromkeys(via))
+    return {"id": row["id"], "source": row["source"], "via": via,
+            **{field: row.get(field) or "" for field in ("url", "title", "author", "folder")},
+            **{field: date(row.get(field)) for field in ("saved", "seen", "removed")},
+            "meta": row.get("meta") or {}}
 
 
 def xhs_actions(row):
-    recorded = row.get("actions", (row["via"],))
+    recorded = row.get("actions", row["via"])
+    if isinstance(recorded, str):
+        recorded = [recorded]
     return [action for action in XHS_ACTIONS if action in recorded]
 
 
-def put_items(rows):
-    put_rows("items.jsonl", (rows[key] for key in sorted(rows)))
+def put_raw(rows, sources=LABELS):
+    for source in sources:
+        records = [raw_record(rows[key]) for key in sorted(rows) if rows[key]["source"] == source]
+        put_rows(f"raw/{source}.jsonl", records)
+
+
+def cache_path(item):
+    name = quote(item["id"].split(":", 1)[1], safe="")
+    if re.fullmatch(r"(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", name):
+        name = f"%{ord(name[0]):02X}" + name[1:]
+    return HOME / "cache" / item["source"] / f"{name}.md"
+
+
+def visible(row):
+    return row["status"] != "hidden" and not row["removed"]
+
+
+def append_curation(op, **values):
+    path = HOME / "curation.jsonl"
+    put_rows(path, [*jsonl(path), {"at": now(), "by": "user", "op": op, **values}])
 
 
 def lookup(q, rows):
