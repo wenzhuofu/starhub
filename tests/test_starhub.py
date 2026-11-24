@@ -62,7 +62,9 @@ class StarhubTest(unittest.TestCase):
         self.enterContext(patch.object(sources.urllib.request, "urlopen", side_effect=AssertionError("unexpected network")))
         self.fixture = json.loads((FIXTURES / "opencli.json").read_text(encoding="utf-8"))
 
-    def command(self, *args, stdin=""):
+    def command(self, *args, stdin="", sync_default=False):
+        if args[0] == "sync" and "--bodies" not in args and not sync_default:
+            args = (*args, "--bodies", "0")
         out = io.StringIO()
         with patch.object(sys, "argv", ["starhub", *args]), patch.object(sys, "stdin", io.StringIO(stdin)):
             with redirect_stdout(out):
@@ -625,6 +627,108 @@ tools: [{tools}]
         self.assertNotIn("简介", text)
         self.assertLess(len(text), 450)
 
+    def test_sync_enriches_newest_twenty_and_preserves_intro(self):
+        self.configure("xhs,bili")
+        self.put(*(row(f"xhs:{i:02}", saved=f"2026-11-{i + 1:02}") for i in range(22)),
+                 row("bili:has-intro", saved="2026-11-24", meta={"intro": "已有简介"}),
+                 row("bili:need-intro", saved="2026-11-25"), row("github:dev/tool"))
+        requests = []
+
+        def call(client, *args):
+            requests.append((client.source, *args))
+            return self.fixture["xiaohongshu_note" if client.source == "xhs" else "bilibili_video"]["data"]
+
+        with patch.object(sources.shutil, "which", return_value="opencli"), \
+             patch.object(sources.OpenCLI, "xhs_saved", return_value=[]), \
+             patch.object(sources.OpenCLI, "bili_saved", return_value=[]), \
+             patch.object(sources.OpenCLI, "call", call), \
+             patch.object(cli.ingest.time, "sleep") as sleep, \
+             patch.object(cli.ingest.random, "uniform", return_value=4) as jitter:
+            self.assertEqual(self.command("sync", "--bodies", "0")[0], 0)
+            self.assertFalse(requests)
+            self.assertEqual(self.command("sync", sync_default=True)[0], 0)
+            self.assertEqual(len(requests), 20)
+            self.assertEqual(requests[:2], [("bili", "bilibili", "video", "need-intro"),
+                                           ("xhs", "xiaohongshu", "note", "https://example.com/21")])
+            self.assertEqual(sleep.call_count, 19)
+            jitter.assert_called_with(3, 6)
+            self.assertEqual(self.command("sync", "--bodies", "1")[0], 0)
+            self.assertEqual(requests[-1][-1], "https://example.com/02")
+        rows = catalog.state()[0]
+        for key, fixture in (("xhs:21", "xiaohongshu_note"), ("bili:need-intro", "bilibili_video")):
+            body = self.fixture[fixture]["data"][1]["value"]
+            self.assertEqual(library.cache_path(rows[key]).read_bytes(), (body + "\n").encode())
+            self.assertEqual(rows[key]["excerpt"], body[:300])
+        self.assertIn("正文 22 / 24", self.command("status")[1])
+        self.assertIn("待整理 24 条", self.command("status")[1])
+
+    def test_body_backfill_retries_and_stops_on_rate_limit(self):
+        self.configure("xhs")
+        self.put(row("xhs:bad", saved="2026-11-24"), row("xhs:next", saved="2026-11-23"),
+                 row("xhs:later", saved="2026-11-22"))
+        attempts = library.state_path("body_failures.json")
+        with patch.object(sources.shutil, "which", return_value="opencli"), \
+             patch.object(sources.OpenCLI, "xhs_saved", return_value=[]):
+            with patch.object(sources.OpenCLI, "body", return_value="") as body:
+                for _ in range(3):
+                    self.assertEqual(self.command("sync", "--bodies", "1")[0], 0)
+                self.assertEqual(body.call_count, 3)
+            self.assertEqual(json.loads(attempts.read_text(encoding="utf-8")), {"xhs:bad": 3})
+            for error in ("HTTP 429", "HTTP 461", "触发风控"):
+                response = subprocess.CompletedProcess([], 1, json.dumps({"ok": False, "error": {"message": error}}), "")
+                with patch.object(sources.OpenCLI, "run", return_value=response) as run:
+                    self.assertEqual(self.command("sync", "--bodies", "20")[0], 1)
+                    self.assertEqual(run.call_count, 1)
+                    self.assertIn("https://example.com/next", run.call_args.args)
+                self.assertEqual(json.loads(attempts.read_text(encoding="utf-8")), {"xhs:bad": 3})
+            with patch.object(sources.OpenCLI, "body", return_value="正文" * 180):
+                self.assertEqual(self.command("sync", "--bodies", "1")[0], 0)
+            self.assertEqual(catalog.state()[0]["xhs:next"]["excerpt"], "正文" * 150)
+
+    def test_compile_note_coverage_and_lint_stale_body_state(self):
+        self.apply_taxonomy("旅行", "旅行/杭州", "旅行/上海", "旅行/北京")
+        self.put(row("xhs:old", topic="旅行/杭州", status="ok", saved="2020-01-01", meta={"intro": "早起绕湖"}),
+                 *(row(f"xhs:title-{i}", topic="旅行/杭州", status="ok") for i in range(9)))
+        text = self.note_text(related="").replace("updated: 2026-11-24\nsources: 1\n", "")
+        text = text.replace("中午避开高峰。", "").replace("- 早上走湖边路线 [1]",
+                    "### 湖边\n| 路线 | 出处 |\n|---|:---:|\n| 湖边 | [1] |\n- 走湖边[1]再去茶村")
+        code, _ = self.command("note", "旅行/杭州", "-", stdin=text)
+        self.assertEqual(code, 0)
+        fields = notes.load(library.curation())["旅行/杭州"]["fields"]
+        self.assertEqual((fields["updated"], fields["sources"], fields["coverage"]), (library.today(), "1", "1/10"))
+        compiled = self.command("compile", "旅行/杭州")[1]
+        self.assertIn("同级：旅行/上海、旅行/北京", compiled)
+        self.assertIn("## 现有笔记", compiled)
+        members, representatives = compiled.split("## 全部成员\n")[1].split("## 代表作\n")
+        self.assertEqual(members.count("xhs:"), 10)
+        self.assertIn("有正文", members)
+        self.assertIn("无正文", members)
+        self.assertTrue(representatives.lstrip().startswith("xhs:old"))
+        self.assertEqual(representatives.count("xhs:"), 8)
+        self.assertIn("旅行/上海", self.command("compile", "--all")[1])
+        library.write(library.cache_path(library.raw_items()["xhs:title-0"]), "新正文")
+        self.assertIn("笔记待更新", self.command("lint")[1])
+        self.command("page")
+        self.assertEqual(next(t["coverage"] for t in self.page_payload()["topics"] if t["id"] == "旅行/杭州"), "2/10")
+
+    def test_rejects_bad_points_and_flags_boilerplate_across_three_notes(self):
+        self.apply_taxonomy("旅行", "旅行/杭州", "旅行/上海", "旅行/北京")
+        text = self.note_text(related="")
+        invalid = text.replace("早上去西湖。", "仅凭标题无法确认。").replace(
+            "- 早上走湖边路线 [1]", "- 缺出处\n| 路线 | 出处 |\n|---|---|\n| 无 | |\n| 错 | [9][1] |")
+        invalid += "2. [另一条](https://example.com/second) — 给出绕湖路线\n"
+        code, output = self.command("note", "旅行/杭州", "-", stdin=invalid)
+        self.assertEqual(code, 1)
+        for reason in ("仅凭标题", "无法确认", "缺少出处编号", "编号超出范围", "说明与另一条相同"):
+            self.assertIn(reason, output)
+        for key in ("旅行/杭州", "旅行/上海", "旅行/北京"):
+            self.assertEqual(self.command("note", key, "-", stdin=self.note_text(topic=key, related=""))[0], 0)
+        library.write("INDEX.md", "旧工具目录\n")
+        code, report = self.command("lint")
+        self.assertEqual(code, 1)
+        self.assertIn("出现在 3 篇笔记", report)
+        self.assertIn("旧版工具索引", report)
+
     def test_clickbait_corpus(self):
         titles = library.jsonl(FIXTURES / "titles.jsonl")
         self.assertGreaterEqual(len(titles), 30)
@@ -659,11 +763,10 @@ tools: [{tools}]
         self.assertIn("仅显示前 20", links)
         with self.assertRaisesRegex(library.Error, "0–100"):
             self.command("topic", "旅行", "--items", "1000")
-        compile_output = self.command("compile", "旅行/杭州/西湖", "--limit", "2")[1]
-        changed, representatives = compile_output.split("## 新增或更新\n")[1].split("## 代表作\n")
-        self.assertIn("--offset 2", compile_output)
-        self.assertEqual(changed.count("xhs:"), 2)
-        self.assertEqual(representatives.count("xhs:"), 5)
+        compile_output = self.command("compile", "旅行/杭州/西湖")[1]
+        members, representatives = compile_output.split("## 全部成员\n")[1].split("## 代表作\n")
+        self.assertEqual(members.count("xhs:"), 24)
+        self.assertEqual(representatives.count("xhs:"), 8)
 
     def test_find_synonym_rank_depth_and_filters(self):
         self.apply_taxonomy("开发", "开发/架构", "生活", synonyms={"画图": ["架构图", "图表"]})
@@ -706,7 +809,7 @@ tools: [{tools}]
                    .replace("[1]\n\n## 出处", "[2]\n\n## 出处").replace("https://", "file://"))
         code, output = self.command("note", "旅行/杭州", "-", stdin=invalid)
         self.assertEqual(code, 1)
-        for issue in ("summary", "updated", "related", "要点", "出处"):
+        for issue in ("summary", "related", "编号超出范围", "出处"):
             self.assertIn(issue, output)
         self.assertFalse((self.home / "wiki" / notes.filename("旅行/杭州")).exists())
         legacy = text.replace("— 给出绕湖路线", "— 小红书 · 2026-11 · 给出绕湖路线")
@@ -731,16 +834,18 @@ tools: [{tools}]
                                      "saved", "seen"})
         self.assertEqual(tool["id"], "github:dev/saved")
         topic = next(entry for entry in page["topics"] if entry["id"] == "旅行/杭州")
-        self.assertEqual(set(topic), {"id", "name", "parent", "summary", "size", "updated", "related", "note", "owner"})
+        self.assertEqual(set(topic), {"id", "name", "parent", "summary", "size", "updated", "related", "note", "owner", "coverage"})
+        self.assertEqual(topic["coverage"], "1/1")
         self.assertEqual(topic["owner"], "ai")
         self.assertEqual((topic["size"], topic["related"]), (1, ["旅行/上海"]))
         self.assertEqual(topic["note"], text.split("---\n", 2)[-1])
-        self.assertIn("## 旅行\n\n- [[旅行/杭州|杭州]] — 早点到景点，避开人潮（1 条，2026-11-24）",
+        self.assertIn(f"## 旅行\n\n- [[旅行/杭州|杭州]] — 早点到景点，避开人潮（1 条，{library.today()}）",
                       (self.home / "wiki/index.md").read_text(encoding="utf-8"))
         self.label("xhs:walk", "旅行/杭州", scene="同一天更正场景")
-        self.assertIn("同一天更正场景", self.command("compile")[1])
+        self.assertIn("旅行/杭州", self.command("compile")[1])
+        self.assertIn("同一天更正场景", self.command("compile", "旅行/杭州")[1])
         self.command("set", "xhs:walk", "status", "hidden")
-        self.assertIn("移出 1 条", self.command("compile")[1])
+        self.assertIn("移出 1 条", self.command("compile", "旅行/杭州")[1])
 
     def test_curation_wins_after_relabel_and_rebuild(self):
         self.apply_taxonomy("旅行", "旅行/杭州", "旅行/上海", "其他", "其他/分组")
@@ -823,7 +928,7 @@ tools: [{tools}]
         self.assertTrue(generated.startswith(before + b"<!-- starhub:begin -->"))
         self.assertTrue(generated.endswith(b"<!-- starhub:end -->" + after))
         self.assertIn("旅行/上海".encode(), generated)
-        self.assertIn("收藏之间有分歧时，写出分歧".encode(), generated)
+        self.assertIn("## 说法不一致时".encode(), generated)
         self.assertEqual(settings_path.read_bytes(), settings)
         self.assertEqual((self.home / "CLAUDE.md").read_bytes(), "见 AGENTS.md\n".encode())
         self.assertTrue((self.home / "wiki/insights").is_dir())
@@ -865,7 +970,8 @@ tools: [{tools}]
         with index_db.open_index() as db:
             self.assertEqual(db.execute("SELECT owner FROM topic WHERE id = ?", (key,)).fetchone()[0], "user")
         self.label("xhs:b", key)
-        self.assertIn("没有待编译", self.command("compile", key)[1])
+        self.assertIn("没有待编译", self.command("compile")[1])
+        self.assertIn("由用户维护", self.command("compile", key)[1])
         code, output = self.command("note", key, "-", stdin=text)
         self.assertEqual(code, 1)
         self.assertIn("由用户维护", output)
@@ -883,7 +989,7 @@ tools: [{tools}]
         library.state_path("starhub.db").unlink()
         self.command("rebuild")
         self.assertEqual(next(topic for topic in self.page_payload()["topics"] if topic["id"] == key)["owner"], "ai")
-        self.assertEqual(path.read_bytes(), first)
+        self.assertEqual(path.read_bytes(), first.replace(b"coverage: 0/1", b"coverage: 0/2"))
         path.unlink()
         self.assertIn("还没有主题笔记", self.command("topic", key)[1])
         self.assertEqual(self.command("note", key, "-", stdin=text)[0], 1)

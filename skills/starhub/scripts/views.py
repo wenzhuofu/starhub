@@ -20,6 +20,7 @@ TOOL_KEYS = ("id", "url", "what", "when", "topic", "saved", "seen")
 
 def page_data(state, conn):
     rows, topics, wiki, _, edges = state
+    groups = notes.member_groups(rows)
     related = defaultdict(list)
     for src, dst, rel in sorted(edges):
         if rel == "related" and src in topics and dst in topics:
@@ -31,7 +32,8 @@ def page_data(state, conn):
     for topic in conn.execute("SELECT * FROM topic ORDER BY id"):
         entry = dict(topic)
         key = entry["id"]
-        entry.update(related=sorted(related[key]), note=wiki.get(key, {}).get("body", ""))
+        entry.update(related=sorted(related[key]), note=wiki.get(key, {}).get("body", ""),
+                     coverage=notes.coverage(groups[key]))
         data["topics"].append(entry)
     for _, row in sorted(rows.items(), key=lambda pair: (not pair[1]["pinned"], pair[0])):
         if not lib.visible(row):
@@ -121,8 +123,9 @@ def write_wiki_index(conn):
 
 
 def write_agents(topics):
-    reference = TEMPLATE.parent.parent / "references/ingest.md"
-    rules = reference.read_text(encoding="utf-8").split("写法要求：\n", 1)[1].split("\n## ", 1)[0].strip()
+    reference = TEMPLATE.parent.parent / "references/compile.md"
+    rules = reference.read_text(encoding="utf-8").split("## 怎么写\n", 1)[1]
+    rules = rules.split("\n## 两个风格示例", 1)[0].strip()
     active = {topic["id"] for topic in tax.load()["topics"]} | {tax.PENDING}
     lines = ["", "## 目录约定", "",
              "- wiki/index.md 是主题目录，wiki/log.md 是入库日志。",

@@ -31,6 +31,8 @@ def status(_args, rows):
     print(f"{sum(counts.values())} 条收藏：{by_source}")
     ingest.print_pending(rows)
     print(f"上次同步 {last}\n网页 {lib.HOME / views.PAGE}")
+    knowledge = [row for row in rows.values() if row["source"] != "github" and lib.visible(row)]
+    print(f"正文 {sum(row['has_body'] for row in knowledge)} / {len(knowledge)}")
     if "xhs" in cfg["sources"]:
         actions = [lib.xhs_actions(row) for row in rows.values() if row["source"] == "xhs" and lib.visible(row)]
         kinds = Counter(action for group in actions for action in group)
@@ -223,6 +225,7 @@ def cli():
     parsers["setup"].add_argument("--sources", metavar="来源列表")
     parsers["sync"].add_argument("source", nargs="*", metavar="来源")
     parsers["sync"].add_argument("--full", action="store_true")
+    parsers["sync"].add_argument("--bodies", type=int, default=20, metavar="条数")
     parsers["find"].add_argument("words", nargs="+", metavar="关键词")
     parsers["find"].add_argument("--topic", metavar="主题")
     parsers["find"].add_argument("--kind", choices=tax.KINDS)
@@ -231,12 +234,12 @@ def cli():
     parsers["find"].add_argument("--all", action="store_true")
     parsers["map"].add_argument("--depth", type=int, choices=(1, 2), default=2)
     parsers["topic"].add_argument("--items", type=int, default=20)
-    parsers["compile"].add_argument("--offset", type=int, default=0)
+    parsers["compile"].add_argument("--all", action="store_true")
     parsers["lint"].add_argument("--fix", action="store_true")
     parsers["classify"].add_argument("--pending", action="store_true", help="重看已归为待定的收藏")
     for name in ("classify", "find"):
         parsers[name].add_argument("--source", choices=LABELS, metavar="来源")
-    for name, default in (("classify", 50), ("find", 20), ("compile", 50)):
+    for name, default in (("classify", 50), ("find", 20)):
         parsers[name].add_argument("--limit", type=int, default=default, metavar="条数")
     parsers["page"].add_argument("--open", action="store_true")
     for name in ("show", "set", "log", "bump", "vendor"):
@@ -271,8 +274,8 @@ def main():
     for key in ("limit", "items"):
         if hasattr(args, key) and not 0 <= getattr(args, key) <= queries.ROW_LIMIT:
             raise Error(f"条数须为 0–{queries.ROW_LIMIT} 的整数")
-    if getattr(args, "offset", 0) < 0:
-        raise Error("--offset 须为非负整数")
+    if getattr(args, "bodies", 0) < 0:
+        raise Error("--bodies 须为非负整数")
     with lib.writing():
         if args.func is not migration.migrate_v2 and migration.needs_migration():
             raise Error("发现旧版收藏库，请先运行 starhub migrate-v2")

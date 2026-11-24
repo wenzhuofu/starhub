@@ -1,6 +1,11 @@
+import json
+import random
+import time
+from urllib.error import HTTPError
+
 import catalog
 import library as lib
-from sources import GitHub, OpenCLI, SOURCE_ERRORS, source_error
+from sources import GitHub, OpenCLI, RateLimited, SOURCE_ERRORS, rate_limited, source_error
 from views import rebuild
 
 
@@ -61,7 +66,42 @@ def merge_batch(rows, source, by_id, batch, full):
 
 
 def print_pending(rows):
-    print(f"待整理 {sum(row['status'] == 'new' and lib.visible(row) for row in rows.values())} 条")
+    print(f"待整理 {sum(row['source'] != 'github' and row['status'] == 'new' and lib.visible(row) for row in rows.values())} 条")
+
+
+def backfill(rows, sources, limit):
+    path = lib.state_path("body_failures.json")
+    failures = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    candidates = sorted((row for row in rows.values() if row["source"] in sources
+                         and row["source"] in ("xhs", "bili") and lib.visible(row)
+                         and not row["has_body"] and failures.get(row["id"], 0) < 3),
+                        key=lambda row: (row["saved"], row["seen"], row["id"]), reverse=True)
+    added = 0
+    for i, row in enumerate(candidates[:limit]):
+        if i:
+            time.sleep(random.uniform(3, 6))
+        key = row["id"]
+        try:
+            body = OpenCLI(row["source"]).body(row).strip()
+            if not body:
+                raise lib.Error("没有可用正文")
+        except SOURCE_ERRORS as exc:
+            if (isinstance(exc, RateLimited) or isinstance(exc, HTTPError) and exc.code in (429, 461)
+                    or rate_limited(str(exc))):
+                print(f"正文已补 {added} 条。请求受限，本次同步已停止。")
+                return added, True
+            failures[key] = failures.get(key, 0) + 1
+            lib.write(path, json.dumps(failures, ensure_ascii=False, indent=2) + "\n")
+            print(f"正文读取失败 {key}（{failures[key]}/3）：{source_error(row['source'], exc)}")
+        else:
+            lib.write(lib.cache_path(row), body.replace("\r\n", "\n").replace("\r", "\n") + "\n")
+            added += 1
+            if key in failures:
+                del failures[key]
+                lib.write(path, json.dumps(failures, ensure_ascii=False, indent=2) + "\n")
+    if candidates and limit:
+        print(f"正文已补 {added} 条")
+    return added, False
 
 
 def sync(args):
@@ -71,7 +111,7 @@ def sync(args):
         raise lib.Error("来源可选 github、xhs、bili")
     synced = set(cfg.get("synced_sources", ()))
     rows = lib.raw_items()
-    succeeded, updated = False, False
+    completed, updated, stopped = set(), False, False
     reports = []
     for source in selected:
         by_id = {(key.casefold() if source == "github" else key): key
@@ -81,22 +121,32 @@ def sync(args):
             batch.extend(fetched(source, cfg, by_id.__contains__, rows, synced, args.full))
         except SOURCE_ERRORS as exc:
             print(f"{lib.LABELS[source]:8} " + source_error(source, exc).removeprefix(lib.LABELS[source]))
+            stopped = (isinstance(exc, RateLimited) or isinstance(exc, HTTPError) and exc.code in (429, 461)
+                       or rate_limited(str(exc)))
             if source == "github" or not batch:
                 reports.append(f"{lib.LABELS[source]} 失败")
+                if stopped:
+                    break
                 continue
             complete = False
         if complete:
-            succeeded = True
+            completed.add(source)
             synced.add(source)
         count = merge_batch(rows, source, by_id, batch, args.full and complete)
         reports.append(f"{lib.LABELS[source]} 新增 {count}" + ("" if complete else "（保留断点）"))
         lib.put_raw(rows, [source])
         updated = True
+        if stopped:
+            break
     if updated:
-        if succeeded:
+        if completed:
             cfg.update(last_sync=lib.now(), synced_sources=sorted(synced))
         lib.put_config(cfg)
+    if args.bodies and completed and not stopped:
+        added, stopped = backfill(catalog.state()[0], completed, args.bodies)
+        reports.append(f"正文新增 {added}" + ("（请求受限）" if stopped else ""))
+    if updated:
         rebuild()
     lib.wiki_log("sync", "，".join(reports) or "0 个来源")
     print_pending(catalog.state()[0])
-    return int(not succeeded)
+    return int(stopped or not completed)

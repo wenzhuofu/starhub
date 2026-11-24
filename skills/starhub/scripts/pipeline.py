@@ -159,47 +159,45 @@ def compile_topic(args, state):
     if args.id and args.id not in topics:
         raise lib.Error(f"找不到主题：{args.id}")
     groups = notes.member_groups(rows)
-    dirty = []
-    for key in ([args.id] if args.id else sorted(topics)):
-        group = groups[key]
-        note = wiki.get(key, {})
-        if note.get("owner") == "user":
-            continue
-        previous = note.get("snapshot", {}) if note.get("file") else {}
-        current = notes.snapshot(group)
-        is_pending = key == tax.PENDING or key.startswith(tax.PENDING + "/")
-        if (args.id or not is_pending) and previous != current:
-            dirty.append((key, group, previous, current))
-    if not dirty:
-        lib.wiki_log("compile", "0 个主题待编译")
-        print("没有待编译的主题。")
+    if not args.id:
+        keys = []
+        for key in sorted(topics):
+            note = wiki.get(key, {})
+            if args.all or (key != tax.PENDING and not key.startswith(tax.PENDING + "/")
+                            and note.get("owner") != "user"
+                            and notes.snapshot(groups[key]) != (note.get("snapshot", {}) if note.get("file") else {})):
+                keys.append(key)
+        lib.wiki_log("compile", f"{len(keys)} 个主题" + ("" if args.all else "待编译"))
+        print(f"# {'全部主题' if args.all else '待编译主题'}（{len(keys)}）" if keys else "没有待编译的主题。")
+        for key in keys:
+            owner = " · 用户维护" if wiki.get(key, {}).get("owner") == "user" else ""
+            print(f"{key}  正文 {notes.coverage(groups[key])}{owner}")
         return
-    key, group, previous, current = dirty[0]
+
+    key, group = args.id, groups[args.id]
+    note = wiki.get(key, {})
+    previous = note.get("snapshot", {}) if note.get("file") else {}
+    current = notes.snapshot(group)
     changed = [row for row in group if previous.get(row["id"]) != current[row["id"]]]
-    gone = sorted(previous.keys() - current.keys())
-    lib.wiki_log("compile", f"{key}（新增或更新 {len(changed)} 条，移出 {len(gone)} 条）")
-    print(f"# {key} · 新增或更新 {len(changed)} 条，移出 {len(gone)} 条")
-    if len(dirty) > 1:
-        print(f"另有 {len(dirty) - 1} 个主题待编译")
-    body = wiki.get(key, {}).get("body", "")
+    gone = len(previous.keys() - current.keys())
+    lib.wiki_log("compile", f"{key}（新增或更新 {len(changed)} 条，移出 {gone} 条）")
+    print(f"# {key} · 新增或更新 {len(changed)} 条，移出 {gone} 条")
+    if note.get("owner") == "user":
+        print("由用户维护")
+    parent = topics[key].get("parent", "")
+    siblings = sorted(other for other, value in topics.items() if other != key and value.get("parent", "") == parent)
+    print(f"上级：{parent or '无'}\n同级：{'、'.join(siblings) or '无'}\n正文 {notes.coverage(group)}")
+    body = note.get("body", "")
     if body:
-        print("\n## 现有笔记\n" + body[:queries.NOTE_LIMIT].rstrip())
-
-    end = args.offset + args.limit
-    if gone[args.offset:end]:
-        print("\n## 已移出\n" + "\n".join(queries.snippet(item, 120) for item in gone[args.offset:end]))
-    if args.limit and end < max(len(changed), len(gone)):
-        print(f"\n下一批：starhub compile {key} --offset {end} --limit {args.limit}")
-
-    def order(row):
-        return row["pinned"], bool(row["excerpt"]), row["saved"], row["id"]
-
-    for title, batch, depth in (("新增或更新", sorted(changed, key=order, reverse=True)[args.offset:end], 1),
-                                ("代表作", sorted(group, key=order, reverse=True)[:5], 2)):
+        print("\n## 现有笔记\n" + body.rstrip())
+    members = sorted(group, key=lambda row: (row["saved"], row["seen"], row["id"]), reverse=True)
+    representatives = sorted(members, key=lambda row: row["has_body"], reverse=True)[:8]
+    for title, batch, depth in (("全部成员", members, 1), ("代表作", representatives, 2)):
         if batch:
             print(f"\n## {title}")
         for row in batch:
             print(queries.display(row, depth, " ".join(row["entities"])))
+            print("  有正文" if row["has_body"] else "  无正文")
             print("  " + queries.snippet(row["url"], 350))
 
 
@@ -217,7 +215,9 @@ def note(args, state):
         for message in errors:
             print("拒收：" + message)
         return 1
-    snapshot = notes.snapshot(notes.member_groups(rows)[args.id])
+    group = notes.member_groups(rows)[args.id]
+    snapshot = notes.snapshot(group)
+    fields["coverage"] = notes.coverage(group)
     notes.save(args.id, fields, body, snapshot)
     lib.wiki_log("note", f"{args.id}（{fields['sources']} 条出处）")
     print(f"已保存主题笔记：{args.id}")

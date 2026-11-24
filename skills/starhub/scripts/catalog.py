@@ -32,12 +32,17 @@ def clean_title(title):
 def excerpt(raw):
     cache = lib.cache_path(raw)
     if cache.exists():
-        with cache.open(encoding="utf-8") as file:
-            body = file.read(300).strip()
+        body = cache.read_text(encoding="utf-8").strip()
+        if body.startswith("title："):
+            # Older explicit reads cached the complete OpenCLI field display.
+            matches = re.findall(r"(?ms)^(?:content|description|desc|intro|正文|简介)：(.*?)(?=^\w+：|\Z)", body)
+            captions = body.partition("\n\n字幕\n")[2]
+            body = "\n".join(part.strip() for part in matches if part.strip()) or captions.strip()
         if body:
-            return body
+            return body[:300]
     meta = raw["meta"]
-    return str(meta.get("intro") or meta.get("desc") or "")[:300]
+    return next((value.strip()[:300] for key in ("intro", "desc")
+                 if isinstance(value := meta.get(key), str) and value.strip()), "")
 
 
 def labels():
@@ -45,7 +50,8 @@ def labels():
 
 
 def project(raw, label):
-    row = {**raw, "clean_title": clean_title(raw["title"]), "excerpt": excerpt(raw),
+    text = excerpt(raw)
+    row = {**raw, "clean_title": clean_title(raw["title"]), "excerpt": text, "has_body": bool(text),
            "topic": tax.PENDING, "kind": "", "scene": "", "entities": [],
            "what": "", "when": "", "status": "new", "pinned": False}
     if raw["source"] == "github":

@@ -113,6 +113,7 @@ def findings(state, pages, resolve):
                 removed.add(row["url"])
     removed -= active
     groups = notes.member_groups(rows)
+    explanations = defaultdict(set)
     for key, note in sorted(wiki.items()):
         if key in live_notes:
             fields = note["fields"]
@@ -122,10 +123,12 @@ def findings(state, pages, resolve):
             if note["errors"] or gaps:
                 add("frontmatter 缺项或格式有误", f"{key}（{'、'.join([*gaps, *note['errors']])}）",
                     "按主题笔记格式补全字段")
-            for line in note["body"].splitlines():
+            for line in notes.source_lines(note["body"]):
                 match = notes.SOURCE.fullmatch(line.strip())
-                if match and match[3] in removed:
-                    add("出处已下架", f"{key} [{match[1]}]", "更换出处或删去对应引用")
+                if match:
+                    explanations[" ".join(match[4].split())].add(key)
+                    if match[3] in removed:
+                        add("出处已下架", f"{key} [{match[1]}]", "更换出处或删去对应引用")
         current, previous = notes.snapshot(groups[key]), note["snapshot"]
         new = current.keys() - previous.keys()
         if note["owner"] == "user" and new:
@@ -134,6 +137,12 @@ def findings(state, pages, resolve):
             add("笔记待更新", key, f"运行 starhub compile {key}")
         elif note["owner"] == "user" and current != previous:
             add("用户维护的笔记成员已变化", key, "在 Obsidian 中核对出处与当前成员")
+
+    for explanation, keys in explanations.items():
+        if len(keys) >= 3:
+            add("出处说明套话", f"「{explanation}」出现在 {len(keys)} 篇笔记", "按每条收藏实际贡献改写出处说明")
+    if (lib.HOME / "INDEX.md").is_file():
+        add("旧版工具索引", "INDEX.md", "工具索引已在 tools/INDEX.md，可移走旧文件")
 
     pending = sum(len(group) for key, group in groups.items() if key == tax.PENDING or key.startswith(tax.PENDING + "/"))
     if pending > 50:

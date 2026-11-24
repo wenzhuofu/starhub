@@ -39,6 +39,13 @@ WBI_ORDER = (
     36, 20, 34, 44, 52,
 )
 
+class RateLimited(Error):
+    pass
+
+
+def rate_limited(text):
+    return re.search(r'(?<!\d)-?(?:429|461|412)(?!\d)|风控|限流|访问频繁|操作频繁|请求过于频繁|验证码|rate[\s_-]*limit|too many requests|captcha|risk[\s_-]*control', text, re.I)
+
 
 def gh(*args):
     exe = shutil.which("gh")
@@ -139,6 +146,10 @@ class OpenCLI:
             response = json.loads(result.stdout)
         except ValueError:
             response = {}
+        if (result.returncode or response.get("ok") is not True) and (
+                rate_limited(json.dumps(response, ensure_ascii=False) if response else result.stdout)
+                or rate_limited(result.stderr)):
+            raise RateLimited("请求受限，本次同步已停止，下次可接着补正文")
         error = response.get("error", {}).get("exitCode", result.returncode)
         if error == 69:
             raise Error(BRIDGE)
@@ -270,7 +281,7 @@ class OpenCLI:
         if error == "profile":
             raise Error(f"小红书{via}页结构有变，无法确认读取的是本人的笔记列表")
         if error == "rate":
-            raise Error(f"小红书{via}页限制了请求，已停止；下次同步可接着补历史")
+            raise RateLimited(f"小红书{via}页限制了请求，已停止；下次同步可接着补历史")
         if error == "request" or result.get("stalled"):
             raise Error(f"小红书{via}页未继续加载，已停止；下次同步可从已记录的位置继续")
 
@@ -332,11 +343,23 @@ class OpenCLI:
         js = f"fetch('{url}', {{credentials: 'include'}}).then(res => res.json())"
         payload = self.call(*browser, "eval", js)
         code = payload["code"]
+        if code != 0 and rate_limited(str(payload)):
+            raise RateLimited("B站请求受限，下次同步可接着补历史")
         if code in (-101, -111, -403):
             raise Error(LOGIN["bili"])
         if code != 0:
             raise Error(f"B站读取失败（{code}），请稍后重试")
         return payload["data"]
+
+    def body(self, item):
+        if self.source == "xhs":
+            rows = self.call("xiaohongshu", "note", item["url"])
+            fields = ("content", "desc", "description", "正文")
+        else:
+            rows = self.call("bilibili", "video", item["id"].split(":", 1)[1])
+            fields = ("description", "desc", "intro", "简介")
+        return "\n".join(row["value"].strip() for row in objects(rows)
+                         if row["field"] in fields and isinstance(row["value"], str) and row["value"].strip())
 
     def read(self, item):
         def fields(rows):

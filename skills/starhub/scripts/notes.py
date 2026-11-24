@@ -6,7 +6,12 @@ from collections import defaultdict
 import library as lib
 import taxonomy as tax
 
-FIELDS = ("topic", "summary", "updated", "sources", "related", "tools")
+INPUT_FIELDS = ("topic", "summary", "related", "tools")
+FIELDS = ("topic", "summary", "updated", "sources", "coverage", "related", "tools")
+BANNED = ("现有摘录", "仅凭标题", "无法证明", "无法确认", "本笔记", "当前资料",
+          "提供主题与场景入口", "补充比较角度", "提供复盘线索", "值得一看")
+CITATION = re.compile(r"(?<!\[)\[([0-9]+)\](?!\(|\])")
+TABLE_RULE = re.compile(r":?-{3,}:?")
 SOURCE = re.compile(r"([1-9]\d*)\.\s+\[(.+)\]\((https?://\S+)\)\s+—\s+(.+)")
 SOURCE_METADATA = re.compile(r"(?:" + "|".join(lib.LABELS.values()) + r")\s*·\s*\d{4}-\d{2}\s*·")
 LINK = re.compile(r"\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]")
@@ -82,16 +87,11 @@ def related_ids(text):
 
 
 def field_errors(fields, topic, topics):
-    errors = [f"缺少 {key}" for key in FIELDS if key not in fields]
+    errors = [f"缺少 {key}" for key in INPUT_FIELDS if key not in fields]
     if fields.get("topic") != topic:
         errors.append("topic 须和命令指定的主题一致")
     if not 1 <= len(fields.get("summary", "")) <= 80:
         errors.append("summary 须为 1–80 字")
-    date = fields.get("updated", "")
-    if not date or lib.date(date) != date:
-        errors.append("updated 须为 YYYY-MM-DD")
-    if not re.fullmatch(r"[0-9]+", fields.get("sources", "")):
-        errors.append("sources 须为非负整数")
     related = inline_list(fields.get("related", ""))
     if related is None or any(not (match := LINK.fullmatch(word)) or not match[2] for word in related):
         errors.append('related 须为主题链接列表，如 ["[[旅行/上海|上海]]"]')
@@ -102,44 +102,76 @@ def field_errors(fields, topic, topics):
     return errors
 
 
-def body_errors(body, count):
-    errors = []
+def body_errors(body):
+    errors = [f"正文含禁用词「{phrase}」" for phrase in BANNED if phrase in body]
     lines = [(number, line.strip()) for number, line in enumerate(body.splitlines(), 1) if line.strip()]
     sections = [line for _, line in lines if line.startswith("## ")]
     if not lines or not re.fullmatch(r"#\s+\S.*", lines[0][1]) or sections != ["## 要点", "## 出处"]:
-        return ["正文须依次包含一级标题、综合段落、## 要点、## 出处"]
+        return 0, [*errors, "正文须依次包含一级标题、综合段落、## 要点、## 出处"]
     points = lines.index(next(pair for pair in lines if pair[1] == "## 要点"))
     sources = lines.index(next(pair for pair in lines if pair[1] == "## 出处"))
     intro = " ".join(line for _, line in lines[1:points])
     sentences = re.split(r"[。！？!?]+|\.(?=\s|$)", intro)
-    if not 3 <= sum(bool(sentence.strip()) for sentence in sentences) <= 6:
-        errors.append("综合段落须为 3–6 句")
-    refs = set()
-    for number, line in lines[sources + 1:]:
+    if not 2 <= sum(bool(sentence.strip()) for sentence in sentences) <= 5:
+        errors.append("综合段落须为 2–5 句")
+    refs, explanations = set(), set()
+    for index, (number, line) in enumerate(lines[sources + 1:], 1):
         match = SOURCE.fullmatch(line)
-        if not match or match[1] in refs:
-            errors.append(f"正文第 {number} 行的出处须有唯一编号、标题、链接和贡献")
+        if not match or match[1] != str(index):
+            errors.append(f"正文第 {number} 行的出处须有连续编号、标题、链接和贡献")
         elif SOURCE_METADATA.match(match[4]):
             errors.append(f"正文第 {number} 行的出处只需写贡献，平台和日期由网页补齐")
         else:
             refs.add(match[1])
-    if count.isdecimal() and count.lstrip("0") != (str(len(refs)) if refs else ""):
-        errors.append("sources 须等于有效出处的条数")
-    if sources == points + 1 and count != "0":
+            explanation = " ".join(match[4].split())
+            if explanation in explanations:
+                errors.append(f"正文第 {number} 行的出处说明与另一条相同")
+            explanations.add(explanation)
+    if sources == points + 1 and refs:
         errors.append("要点不能为空")
-    for number, line in lines[points + 1:sources]:
-        citations = re.findall(r"\[([1-9]\d*)\]", line)
-        if (not line.startswith(("- ", "* ")) or not citations or not re.search(r"\[\d+\]$", line)
-                or any(ref not in refs for ref in citations)):
-            errors.append(f"正文第 {number} 行的要点须以有效出处编号结尾")
-    return errors
+    in_table = False
+    for i, (number, line) in enumerate(lines[1:sources], 1):
+        citations = CITATION.findall(line)
+        if any(ref not in refs for ref in citations):
+            errors.append(f"正文第 {number} 行的出处编号超出范围")
+        if i <= points:
+            continue
+        if line.startswith("### "):
+            in_table = False
+            continue
+        bullet = re.match(r"(?:[-*+]|\d+[.)])\s", line)
+        has_cells = "|" in line and not bullet
+        if has_cells and i + 1 < sources and table_rule(lines[i + 1][1]):
+            in_table = True
+            continue
+        in_table = in_table and has_cells
+        if in_table and table_rule(line):
+            continue
+        if not citations:
+            errors.append(f"正文第 {number} 行的要点缺少出处编号")
+        if not (bullet or in_table):
+            errors.append(f"正文第 {number} 行的要点须为列表条目或表格行")
+    return len(refs), errors
+
+
+def table_rule(line):
+    cells = line.strip("|").split("|")
+    return "|" in line and all(TABLE_RULE.fullmatch(cell.strip()) for cell in cells)
+
+
+def source_lines(body):
+    parts = re.split(r"(?m)^## 出处[ \t]*$", body, maxsplit=1)
+    if len(parts) == 2:
+        yield from re.split(r"(?m)^## ", parts[1], maxsplit=1)[0].splitlines()
 
 
 def validate(text, topic, topics):
     fields, body, errors = split(text)
     if body:
         errors.extend(field_errors(fields, topic, topics))
-        errors.extend(body_errors(body, fields.get("sources", "")))
+        count, problems = body_errors(body)
+        errors.extend(problems)
+        fields.update(updated=lib.today(), sources=str(count))
     elif not errors:
         errors.append("正文不能为空")
     return fields, body, errors
@@ -162,8 +194,12 @@ def member_groups(rows):
     return groups
 
 
+def coverage(group):
+    return f"{sum(row['has_body'] for row in group)}/{len(group)}"
+
+
 def snapshot(rows):
-    fields = ("clean_title", "source", "kind", "scene", "entities", "saved", "url", "excerpt")
+    fields = ("clean_title", "source", "kind", "scene", "entities", "saved", "url", "excerpt", "has_body")
     return {row["id"]: digest(json.dumps([row[key] for key in fields], ensure_ascii=False).encode("utf-8"))
             for row in rows}
 
