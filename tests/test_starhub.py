@@ -156,56 +156,125 @@ class StarhubTest(unittest.TestCase):
         self.assertIn("README 正文", text)
         self.assertEqual(request.call_args.args[1], "application/vnd.github.raw")
 
-    def test_opencli_xhs_limits_promote_and_read(self):
+    def test_xhs_records_both_actions_and_preserves_the_saved_link(self):
         self.configure("xhs")
-        self.put(row("xhs:saved", via="点赞", status="ok", what="原描述", meta={"extra": "保留"}))
+        saved_id, liked_id = "1" * 24, "2" * 24
+        self.put(row(f"xhs:{saved_id}", via="点赞", status="ok", what="原描述", meta={"extra": "保留"}))
         commands = []
+        saved_note = {**self.fixture["xiaohongshu_saved"]["data"][0], "id": saved_id}
+        liked_note = {**self.fixture["xiaohongshu_liked"]["data"][0], "id": liked_id}
 
         def runner(exe, *args):
-            commands.append(args)
-            body = self.fixture[f"{args[0]}_{args[1]}"]
+            if args[0] == "xiaohongshu":
+                commands.append(args)
+                body = self.fixture["xiaohongshu_note"]
+            elif args[5] != "eval":
+                body = {"ok": True, "data": {}}
+            else:
+                match = re.search(r"\('(fav|liked)','[0-9a-f]{24}',(\d+),(\d+),'[^']*',\d+\)$", args[6])
+                if match:
+                    tab, offset, pages = match.groups()
+                    commands.append((tab, offset, pages))
+                    notes = [saved_note] if tab == "fav" else [liked_note, {**liked_note, "id": saved_id}]
+                    body = {"ok": True, "data": {"rows": notes, "more": False, "offset": len(notes), "stalled": False}}
+                else:
+                    body = {"ok": True, "data": "0" * 24}
             return self.opencli_result(args, body)
 
         with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
             code, text = self.command("sync")
             self.assertEqual(code, 0)
-            self.assertIn("新增 1（收藏 0，点赞 1）", text)
+            self.assertIn("新增 1", text)
+            self.assertIn("收藏 1，点赞 2（两者都有 1）", text)
             self.command("sync")
-            _, output = self.command("read", "xhs:saved")
-        self.assertEqual([args[3] for args in commands[:4]], ["100", "100", "20", "20"])
+            _, output = self.command("read", f"xhs:{saved_id}")
+        self.assertEqual(commands[:4], [("fav", "0", "0"), ("liked", "0", "0")] * 2)
         items = library.items()
-        saved = items["xhs:saved"]
+        saved = items[f"xhs:{saved_id}"]
         self.assertEqual(saved["what"], "原描述")
         self.assertEqual(saved["status"], "ok")
         self.assertEqual(saved["via"], "收藏")
+        self.assertEqual(saved["actions"], ["收藏", "点赞"])
+        self.assertEqual(saved["url"], saved_note["url"])
         self.assertEqual(saved["saved"], "2020-01-02")
         self.assertEqual(saved["meta"]["extra"], "保留")
-        self.assertEqual(items["xhs:liked"]["status"], "new")
+        self.assertEqual(items[f"xhs:{liked_id}"]["actions"], ["点赞"])
+        exported = {item["id"]: item for item in self.page_payload()["items"]}
+        self.assertEqual(exported[saved["id"]]["actions"], ["收藏", "点赞"])
         self.assertEqual(commands[-1][2], saved["url"])
         self.assertIn("xsec_token=A%2B%3D&xsec_source=pc_user", output)
         self.assertIn("西湖步行路线", output)
 
-    def test_xhs_incremental_expands_only_the_list_without_known_ids(self):
+    def test_xhs_full_list_refreshes_once_and_continues_beyond_100(self):
+        note = self.fixture["xiaohongshu_saved"]["data"][0]
+        user_id = "0" * 24
+
+        def page(start, end, *, more=True, stalled=False):
+            rows = [{**note, "id": f"{i:024x}"} for i in range(start, end)]
+            return {"rows": rows, "offset": end, "more": more, "stalled": stalled,
+                    "cursor": str(end), "page": 1}
+
+        with patch.object(sources.shutil, "which", return_value="opencli.cmd"):
+            client = sources.OpenCLI("xhs")
+        checkpoint = {}
+        with patch.object(client, "call", side_effect=[{}, page(0, 30), page(30, 30, stalled=True),
+                                                       {}, page(30, 110), page(110, 140, more=False)]) as call:
+            entries = list(client.xhs_list(("browser",), "script", "fav", user_id, "收藏",
+                                           lambda *_: False, checkpoint, None))
+        self.assertEqual(len(entries), 140)
+        self.assertEqual(len({entry["id"] for entry in entries}), 140)
+        self.assertEqual([c.args[1] for c in call.call_args_list], ["open", "eval", "eval", "open", "eval", "eval"])
+        self.assertTrue(call.call_args.args[-1].endswith(f"('fav','{user_id}',0,8,'MTEw',1)"))
+        self.assertEqual(checkpoint, {"count": 140, "done": True, "cursor": "140", "page": 1})
+
+    def test_xhs_incremental_checks_the_current_action_then_resumes_history(self):
+        note = self.fixture["xiaohongshu_saved"]["data"][0]
+        user_id = "0" * 24
+        notes = [{**note, "id": f"{i:024x}"} for i in (1, 2, 3)]
+        first = {"rows": notes[:1], "offset": 1, "more": True, "stalled": False, "cursor": "head", "page": 1}
+        second = {**first, "rows": notes[1:2], "offset": 2}
+        older = {**first, "rows": notes[2:], "offset": 3, "cursor": "older"}
+        with patch.object(sources.shutil, "which", return_value="opencli.cmd"):
+            client = sources.OpenCLI("xhs")
+        known = {(f"xhs:{notes[0]['id']}", "点赞"), (f"xhs:{notes[1]['id']}", "收藏")}
+        checkpoint = {"cursor": "past", "page": 3, "count": 40, "done": False}
+        with patch.object(client, "call", side_effect=[{}, first, second, older]) as call:
+            entries = list(client.xhs_list(("browser",), "script", "fav", user_id, "收藏",
+                                           lambda key, action: (key, action) in known, checkpoint, 2))
+        self.assertEqual(len(entries), 3)
+        self.assertTrue(call.call_args_list[-2].args[-1].endswith(f"('fav','{user_id}',1,1,'',1)"))
+        self.assertTrue(call.call_args.args[-1].endswith(f"('fav','{user_id}',0,2,'cGFzdA==',3)"))
+        self.assertEqual(checkpoint, {"cursor": "older", "page": 1, "count": 41, "done": False})
+
+    def test_xhs_history_budget_is_shared_by_unfinished_lists(self):
+        with patch.object(sources.shutil, "which", return_value="opencli.cmd"):
+            client = sources.OpenCLI("xhs")
+        history = {}
+        with patch.object(client, "call", side_effect=[{}, "0" * 24, {}] * 2), \
+             patch.object(client, "xhs_list", return_value=()) as scan:
+            list(client.xhs_saved(lambda *_: False, history, False))
+            self.assertEqual([call.args[-1] for call in scan.call_args_list], [2, 2])
+            history["tabs"]["fav"]["done"] = True
+            scan.reset_mock()
+            list(client.xhs_saved(lambda *_: False, history, False))
+            self.assertEqual([call.args[-1] for call in scan.call_args_list], [4, 4])
+
+    def test_xhs_keeps_data_read_before_a_pagination_error(self):
         self.configure("xhs")
-        library.put_config({**library.config(), "synced_sources": ["xhs"]})
-        self.put(row("xhs:saved-22"), row("xhs:liked-5", via="点赞"))
-        calls = []
+        note_id = f"xhs:{'1' * 24}"
 
-        def runner(_exe, *args):
-            command, limit = args[1], int(args[3])
-            calls.append((command, limit))
-            sample = self.fixture[f"xiaohongshu_{command}"]["data"][0]
-            data = [{**sample, "id": f"{command}-{i}"} for i in range(min(limit, 25))]
-            return self.opencli_result(args, {"ok": True, "data": data})
+        def read_before_error(_self, _known, history, _full):
+            history["tabs"] = {"fav": {"cursor": "resume", "page": 1, "count": 1, "done": False}}
+            yield row(note_id, via="收藏")
+            raise library.Error("点赞页加载失败")
 
-        with patch.object(sources.shutil, "which", return_value="opencli.cmd"), patch.object(sources, "run", runner):
-            self.assertIn("新增 43（收藏 24，点赞 19）", self.command("sync")[1])
-            self.assertEqual(calls, [("saved", 20), ("saved", 100), ("liked", 20)])
-            self.assertIn("xhs:saved-24", library.items())
-            self.assertNotIn("xhs:liked-24", library.items())
-            calls.clear()
-            self.assertIn("新增 5（收藏 0，点赞 5）", self.command("sync", "--full")[1])
-            self.assertEqual(calls, [("saved", 100), ("liked", 100)])
+        with patch.object(sources.shutil, "which", return_value="opencli.cmd"), \
+             patch.object(sources.OpenCLI, "xhs_saved", read_before_error):
+            code, output = self.command("sync")
+        self.assertEqual(code, 1)
+        self.assertIn("点赞页加载失败", output)
+        self.assertEqual(library.items()[note_id]["actions"], ["收藏"])
+        self.assertEqual(library.config()["xhs_history"]["tabs"]["fav"]["cursor"], "resume")
 
     def test_opencli_bili_all_folders_and_subtitles(self):
         self.configure("bili")

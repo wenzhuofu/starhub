@@ -1,3 +1,4 @@
+import base64
 import datetime as dt
 import hashlib
 import itertools
@@ -11,6 +12,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import suppress
+from pathlib import Path
 
 from library import Error, LABELS, run
 
@@ -21,6 +23,15 @@ LOGIN = {
     "xhs": "小红书未登录：在 Chrome 打开 xiaohongshu.com 登录后重试",
     "bili": "B站未登录：在 Chrome 打开 bilibili.com 登录后重试",
 }
+XHS_URL = "https://www.xiaohongshu.com"
+XHS_PROFILE = Path(__file__).resolve().parents[1] / "assets" / "xhs-profile.js"
+XHS_SELF_JS = """(async()=>{ for (let i=0; i<20; i++) {
+  const raw=window.__INITIAL_STATE__?.user?.userInfo;
+  const user=raw?._value??raw;
+  const id=user?.user_id||user?.userId||user?.userID;
+  if (id) return id;
+  await new Promise(resolve=>setTimeout(resolve,250));
+} return ''; })()"""
 WBI_ORDER = (
     46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
     33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
@@ -161,17 +172,107 @@ class OpenCLI:
             raise Error(LOGIN["bili"])
         return uid
 
-    def xhs_saved(self, known, first, full):
-        limit = 100 if first or full else 20
-        for command, via in (("saved", "收藏"), ("liked", "点赞")):
-            args = ("xiaohongshu", command, "--limit")
-            rows = objects(self.call(*args, str(limit), empty=True))
-            if limit == len(rows) == 20 and not any(known(f"xhs:{row['id']}") for row in rows):
-                rows = objects(self.call(*args, "100", empty=True))
-            for row in rows:
-                yield dict(id=f"xhs:{row['id']}", source="xhs", via=via, url=row["url"],
+    def xhs_saved(self, known, history, full):
+        # The profile's lists scroll inside their own pane. Use its own
+        # sequential page-loading action and the cursor it already maintains.
+        script = " ".join(XHS_PROFILE.read_text(encoding="utf-8").splitlines())
+        browser = ("browser", "--session", f"starhub-{uuid.uuid4().hex}", "--window", "background")
+        try:
+            self.call(*browser, "open", f"{XHS_URL}/explore")
+            user_id = self.call(*browser, "eval", " ".join(XHS_SELF_JS.splitlines()))
+            if not isinstance(user_id, str) or not re.fullmatch(r"[0-9a-f]{24}", user_id):
+                raise Error(LOGIN["xhs"])
+            account = hashlib.sha256(user_id.encode("ascii")).hexdigest()
+            if history.get("account") != account:
+                history.clear()
+                history["account"] = account
+            tabs = history.setdefault("tabs", {})
+            if full and all(tabs.get(tab, {}).get("done") for tab in ("fav", "liked")):
+                tabs.clear()
+            unfinished = sum(not tabs.get(tab, {}).get("done") for tab in ("fav", "liked"))
+            pages = None if full else 4 // max(1, unfinished)
+            for tab, via in (("fav", "收藏"), ("liked", "点赞")):
+                checkpoint = tabs.setdefault(tab, {})
+                yield from self.xhs_list(browser, script, tab, user_id, via, known, checkpoint, pages)
+        finally:
+            with suppress(Error):
+                self.call(*browser, "close")
+
+    def xhs_list(self, browser, script, tab, user_id, via, known, checkpoint, history_pages):
+        url = f"{XHS_URL}/user/profile/{user_id}?tab={tab}&subTab=note"
+        self.call(*browser, "open", url)
+        seen = set()
+
+        def read(offset, pages, resume=None):
+            resume = resume or {}
+            cursor = base64.b64encode(resume.get("cursor", "").encode("utf-8")).decode("ascii")
+            page = int(resume.get("page") or 1)
+            args = f"('{tab}','{user_id}',{offset},{pages},'{cursor}',{page})"
+            result = self.call(*browser, "eval", f"({script}){args}")
+            if "rows" not in result:
+                self.xhs_failure(via, result)
+                raise Error("小红书没有返回有效的列表")
+            return result
+
+        def emit(result):
+            for row in objects(result["rows"]):
+                note_id = row.get("id")
+                if not isinstance(note_id, str) or not re.fullmatch(r"[0-9a-f]{24}", note_id):
+                    continue
+                key = f"xhs:{note_id}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                yield dict(id=key, source="xhs", via=via, url=row["url"],
                            title=row["title"], author=row["author"], folder="", saved="",
                            meta=dict(likes=row.get("likes"), type=row.get("type")))
+
+        def advance(state, result):
+            state.update(cursor=result.get("cursor") or "", page=result.get("page") or 1,
+                         count=state.get("count", 0) + len(result["rows"]),
+                         done=not result["more"] and not result.get("error"))
+
+        head = read(0, 0)
+        yield from emit(head)
+        self.xhs_failure(via, head)
+        if not head["more"]:
+            checkpoint.update(cursor=head.get("cursor") or "", page=head.get("page") or 1,
+                              count=len(head["rows"]), done=True)
+            return
+        if not checkpoint:
+            advance(checkpoint, head)
+        else:
+            recent = head
+            while recent["more"] and not any(known(f"xhs:{row.get('id')}", via) for row in recent["rows"]):
+                result = read(recent["offset"], 1)
+                if result.get("stalled") and not result["rows"]:
+                    self.call(*browser, "open", url)
+                    result = read(0, 1, recent)
+                yield from emit(result)
+                self.xhs_failure(via, result)
+                recent = result
+
+        while not checkpoint.get("done"):
+            result = read(0, 8 if history_pages is None else history_pages, checkpoint)
+            if result.get("stalled") and not result["rows"]:
+                self.call(*browser, "open", url)
+                result = read(0, 8 if history_pages is None else history_pages, checkpoint)
+            yield from emit(result)
+            advance(checkpoint, result)
+            self.xhs_failure(via, result)
+            if history_pages is not None:
+                break
+
+    def xhs_failure(self, via, result):
+        error = result.get("error")
+        if error == "login":
+            raise Error(LOGIN["xhs"])
+        if error == "profile":
+            raise Error(f"小红书{via}页结构有变，无法确认读取的是本人的笔记列表")
+        if error == "rate":
+            raise Error(f"小红书{via}页限制了请求，已停止；下次同步可接着补历史")
+        if error == "request" or result.get("stalled"):
+            raise Error(f"小红书{via}页未继续加载，已停止；下次同步可从已记录的位置继续")
 
     def bili_saved(self, known, first, full):
         uid = self.uid()

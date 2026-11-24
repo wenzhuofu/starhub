@@ -269,6 +269,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
       <div class="tabs" id="sourceTabs" role="group" aria-label="按来源筛选"></div>
       <p class="result" id="result" aria-live="polite"></p>
     </div>
+    <div class="row2" id="xhsActions" role="group" aria-label="按小红书互动类型筛选"></div>
     <div class="row2" id="topics" role="group" aria-label="按主题筛选"></div>
   </div>
 </div>
@@ -277,7 +278,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   <main>
     <table class="list" id="list" hidden>
       <colgroup><col class="c-src"><col class="c-content"><col class="c-when"><col class="c-topic"><col class="c-date"></colgroup>
-      <thead><tr><th scope="col">来源</th><th scope="col">内容</th><th scope="col">什么时候用得上</th><th scope="col">主题</th><th scope="col" class="num">收藏于</th></tr></thead>
+      <thead><tr><th scope="col">来源</th><th scope="col">内容</th><th scope="col">什么时候用得上</th><th scope="col">主题</th><th scope="col" class="num">日期</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
     <div class="empty" id="empty" hidden></div>
@@ -293,6 +294,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   'use strict';
   const LABEL = { github: 'GitHub', xhs: '小红书', bili: 'B站' };
   const ORDER = ['github', 'xhs', 'bili'];
+  const XHS_ACTIONS = { saved: '收藏', liked: '点赞' };
   const TOP_TOPICS = 12;
   const $ = (id) => document.getElementById(id);
 
@@ -354,7 +356,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     }
     const tr = document.createElement('tr');
     tr.className = 'item';
-    const sub = it.source === 'github' ? (it.type || '') : it.source === 'bili' ? (it.folder || '') : (it.via && it.via !== 'star' ? it.via : '');
+    const actions = it.source === 'xhs' ? (it.actions || [it.via]) : [];
+    const sub = it.source === 'github' ? (it.type || '') : it.source === 'bili' ? (it.folder || '') : actions.join('、');
     const isNew = lastDay && it.seen === lastDay;
     const hasDesc = !!(it.what || it.when);
     tr.innerHTML =
@@ -374,8 +377,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     when.textContent = it.when || '';
     frag.appendChild(tr);
     rows.push({
-      it, tr, title, what, when, topicEl, subEl, sub, ym,
-      hay: [it.title, it.what, it.when, it.topic, it.author, it.folder, label(it.source), it.via].filter(Boolean).join('\n').toLowerCase(),
+      it, tr, title, what, when, topicEl, subEl, sub, ym, actions,
+      hay: [it.title, it.what, it.when, it.topic, it.author, it.folder, label(it.source), it.via, ...actions].filter(Boolean).join('\n').toLowerCase(),
     });
   }
   tbody.appendChild(frag);
@@ -385,14 +388,18 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   for (const r of rows) if (r.it.topic) topicCount.set(r.it.topic, (topicCount.get(r.it.topic) || 0) + 1);
   const topics = [...topicCount.keys()].sort((a, b) => topicCount.get(b) - topicCount.get(a) || a.localeCompare(b, 'zh-CN'));
 
-  const state = { q: '', source: '', topic: '', allTopics: false };
+  const state = { q: '', source: '', topic: '', action: '', allTopics: false };
+  const onlyXhs = present.length === 1 && present[0] === 'xhs';
   try {
     const h = new URLSearchParams(location.hash.slice(1));
     state.q = h.get('q') || '';
     state.source = h.get('s') || '';
     state.topic = h.get('t') || '';
+    state.action = h.get('a') || '';
   } catch (_) {}
   if (state.source && !present.includes(state.source)) state.source = '';
+  if (onlyXhs) state.source = 'xhs';
+  if (state.source !== 'xhs' || !Object.hasOwn(XHS_ACTIONS, state.action)) state.action = '';
   if (state.topic && !topicCount.has(state.topic)) state.topic = '';
   if (state.topic && topics.indexOf(state.topic) >= TOP_TOPICS) state.allTopics = true;
   $('q').value = state.q;
@@ -431,16 +438,28 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     // facet counts: each facet ignores its own filter
     const bySource = new Map();
     const byTopic = new Map();
-    let qTopicAll = 0, qSourceAll = 0;
+    const byAction = new Map();
+    const actionLabel = XHS_ACTIONS[state.action];
+    let qTopicAll = 0;
     rows.forEach((r, i) => {
       if (!qMatch[i]) return;
-      if (!state.topic || r.it.topic === state.topic) { bySource.set(r.it.source, (bySource.get(r.it.source) || 0) + 1); qTopicAll++; }
-      if (!state.source || r.it.source === state.source) { if (r.it.topic) byTopic.set(r.it.topic, (byTopic.get(r.it.topic) || 0) + 1); qSourceAll++; }
+      if (!state.topic || r.it.topic === state.topic) {
+        bySource.set(r.it.source, (bySource.get(r.it.source) || 0) + 1);
+        qTopicAll++;
+        for (const action of r.actions) byAction.set(action, (byAction.get(action) || 0) + 1);
+      }
+      if ((!state.source || r.it.source === state.source) && (!actionLabel || r.actions.includes(actionLabel)) && r.it.topic) {
+        byTopic.set(r.it.topic, (byTopic.get(r.it.topic) || 0) + 1);
+      }
     });
 
     // one source only: the tabs would just repeat the total
     $('sourceTabs').innerHTML = present.length < 2 ? '' : chip('全部', qTopicAll, !state.source, 'data-source=""') +
       present.map((s) => chip(label(s), bySource.get(s) || 0, state.source === s, 'data-source="' + esc(s) + '"')).join('');
+    $('xhsActions').innerHTML = state.source === 'xhs' ?
+      chip('全部互动', bySource.get('xhs') || 0, !state.action, 'data-action=""') +
+      Object.entries(XHS_ACTIONS).map(([key, name]) =>
+        chip(name, byAction.get(name) || 0, state.action === key, 'data-action="' + key + '"')).join('') : '';
 
     const narrowed = ts.length > 0 || !!state.source;
     const pool = narrowed ? topics.filter((t) => byTopic.get(t) || t === state.topic) : topics;
@@ -456,7 +475,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     for (const m of months.values()) m.count = 0;
     let visible = 0;
     rows.forEach((r, i) => {
-      const show = qMatch[i] && (!state.source || r.it.source === state.source) && (!state.topic || r.it.topic === state.topic);
+      const show = qMatch[i] && (!state.source || r.it.source === state.source) &&
+        (!state.topic || r.it.topic === state.topic) && (!actionLabel || r.actions.includes(actionLabel));
       r.tr.hidden = !show;
       if (!show) return;
       visible++;
@@ -472,7 +492,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
       m.n.textContent = m.count.toLocaleString('zh-CN') + ' 条';
     }
 
-    const filtered = ts.length || state.source || state.topic;
+    const filtered = ts.length || state.source || state.topic || state.action;
     $('result').textContent = filtered ? (visible ? '找到 ' + visible.toLocaleString('zh-CN') + ' 条' : '') : '';
     $('search').classList.toggle('has-q', !!state.q);
     const empty = $('empty');
@@ -491,6 +511,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     if (state.q) h.set('q', state.q);
     if (state.source) h.set('s', state.source);
     if (state.topic) h.set('t', state.topic);
+    if (state.action) h.set('a', state.action);
     const hash = h.toString();
     try { history.replaceState(null, '', hash ? '#' + hash : location.pathname + location.search); } catch (_) {}
   }
@@ -523,10 +544,15 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.clear) { state.q = ''; state.source = ''; state.topic = ''; $('q').value = ''; render(); $('q').focus(); return; }
+    if (b.dataset.clear) { state.q = ''; state.source = onlyXhs ? 'xhs' : ''; state.topic = ''; state.action = ''; $('q').value = ''; render(); $('q').focus(); return; }
     if (b.dataset.more) { state.allTopics = !state.allTopics; render(); return; }
     if ('source' in b.dataset) {
       state.source = b.closest('#rows') ? b.dataset.source : (state.source === b.dataset.source ? '' : b.dataset.source);
+      if (state.source !== 'xhs') state.action = '';
+      render(); keepListInView(); return;
+    }
+    if ('action' in b.dataset) {
+      state.action = b.dataset.action;
       render(); keepListInView(); return;
     }
     if ('topic' in b.dataset) {

@@ -33,6 +33,22 @@ def status(_args, rows):
     print(f"{sum(counts.values())} 条收藏：{by_source}")
     print_pending(rows)
     print(f"上次同步 {last}\n网页 {PAGE}")
+    if "xhs" in cfg["sources"]:
+        actions = [lib.xhs_actions(row) for row in rows.values()
+                   if row["source"] == "xhs" and row["status"] != "archived"]
+        kinds = Counter(action for group in actions for action in group)
+        overlap = sum(len(group) == 2 for group in actions)
+        print(f"小红书：收藏 {kinds['收藏']}，点赞 {kinds['点赞']}（两者都有 {overlap}）")
+        tabs = cfg.get("xhs_history", {}).get("tabs", {})
+        progress = []
+        for tab, label in (("fav", "收藏"), ("liked", "点赞")):
+            state = tabs.get(tab, {})
+            if state:
+                stage = "已补完" if state.get("done") else "已补到"
+                progress.append(f"{label}{stage} {state.get('count', 0)} 条")
+            else:
+                progress.append(f"{label}待补录")
+        print("小红书历史：" + "，".join(progress))
 
 
 def setup(args, _rows):
@@ -82,31 +98,50 @@ def sync(args, rows):
     selected = list(dict.fromkeys(args.source or cfg["sources"]))
     synced = set(cfg.get("synced_sources", ()))
     succeeded = False
+    updated = False
     for source in selected:
         by_id = {(key.casefold() if source == "github" else key): key
                  for key, row in rows.items() if row["source"] == source}
         known = by_id.__contains__
 
+        batch = []
+        complete = True
         try:
             if source == "github":
                 fetched = GitHub().saved(cfg["github"], lambda key: known(key.casefold()), args.full)
             elif source == "xhs":
-                fetched = OpenCLI(source).xhs_saved(known, source not in synced, args.full)
+                def known_action(key, action):
+                    return known(key) and action in lib.xhs_actions(rows[key])
+
+                history = cfg.setdefault("xhs_history", {})
+                fetched = OpenCLI(source).xhs_saved(known_action, history, args.full)
             else:
                 fetched = OpenCLI(source).bili_saved(known, source not in synced, args.full)
-            batch = list(fetched)
+            batch.extend(fetched)
         except SOURCE_ERRORS as exc:
             hint = source_error(source, exc)
             print(f"{LABELS[source]:8} " + hint.removeprefix(LABELS[source]))
-            continue
+            if source != "xhs" or not batch:
+                continue
+            complete = False
 
-        succeeded = True
-        synced.add(source)
-        added, seen = Counter(), set()
+        updated = True
+        if complete:
+            succeeded = True
+            synced.add(source)
+        added, seen = 0, set()
+        xhs_seen = {action: set() for action in lib.XHS_ACTIONS}
         date = lib.today()
         for incoming in batch:
             key = incoming["id"]
             normalized = key.casefold() if source == "github" else key
+            if source == "xhs":
+                action = incoming["via"]
+                xhs_seen[action].add(key)
+                item = rows.get(key)
+                if item is not None:
+                    stored = lib.xhs_actions(item)
+                    item["actions"] = [kind for kind in lib.XHS_ACTIONS if kind == action or kind in stored]
             if normalized in seen:
                 continue
             seen.add(normalized)
@@ -123,10 +158,14 @@ def sync(args, rows):
                 row["saved"] = incoming["saved"] or date
                 if source == "github":
                     row["tool"] = {}
+                if source == "xhs":
+                    row["actions"] = [action]
                 rows[key] = row
-                added[row["via"]] += 1
-        suffix = f"（收藏 {added['收藏']}，点赞 {added['点赞']}）" if source == "xhs" else ""
-        print(f"{LABELS[source]:8} 新增 {sum(added.values())}{suffix}")
+                added += 1
+        print(f"{LABELS[source]:8} 新增 {added}")
+        if source == "xhs":
+            saved, liked = xhs_seen["收藏"], xhs_seen["点赞"]
+            print(f"小红书本次读取：收藏 {len(saved)}，点赞 {len(liked)}（两者都有 {len(saved & liked)}）")
         if source == "github" and args.full:
             for normalized in sorted(by_id.keys() - seen):
                 item = rows[by_id[normalized]]
@@ -134,9 +173,10 @@ def sync(args, rows):
                     item["status"] = "archived"
                     print(f"归档 {item['id']}")
 
-    if succeeded:
+    if updated:
         lib.put_items(rows)
-        cfg.update(last_sync=now(), synced_sources=sorted(synced))
+        if succeeded:
+            cfg.update(last_sync=now(), synced_sources=sorted(synced))
         lib.put_config(cfg)
         regenerate(rows, cfg)
     print_pending(rows)
@@ -253,6 +293,9 @@ def write_page(rows, cfg):
     keys = ("id", "source", "via", "url", "title", "author", "folder", "saved", "seen", "what", "when", "topic", "status")
     data = [{**{key: row[key] for key in keys}, "type": row.get("tool", {}).get("type", "")}
             for _, row in sorted(rows.items()) if row["status"] != "archived"]
+    for item in data:
+        if item["source"] == "xhs":
+            item["actions"] = lib.xhs_actions(rows[item["id"]])
     raw = json.dumps({"generated": now(), "last_sync": cfg["last_sync"], "items": data}, ensure_ascii=False)
     escaped = raw.translate(str.maketrans({"<": r"\u003c", ">": r"\u003e", "&": r"\u0026"}))
     lib.write("starhub.html", template.replace(marker, escaped))

@@ -10,6 +10,7 @@ from pathlib import Path
 HOME = Path(os.environ.get("STARHUB_HOME") or Path.home() / ".starhub").expanduser().resolve()
 VENDOR = Path(os.environ.get("STARHUB_VENDOR") or HOME / "vendor").expanduser()
 LABELS = {"github": "GitHub", "xhs": "小红书", "bili": "B站"}
+XHS_ACTIONS = ("收藏", "点赞")
 SETUP_HINT = "还没有设置。运行：starhub setup"
 
 
@@ -75,6 +76,11 @@ def put_rows(name, rows):
 
 def items():
     return {row["id"]: row for row in jsonl(HOME / "items.jsonl")}
+
+
+def xhs_actions(row):
+    recorded = row.get("actions", (row["via"],))
+    return [action for action in XHS_ACTIONS if action in recorded]
 
 
 def put_items(rows):
