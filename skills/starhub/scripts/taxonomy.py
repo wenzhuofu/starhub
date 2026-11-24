@@ -4,7 +4,7 @@ import re
 import library as lib
 
 PENDING = "待定"
-KINDS = ("攻略", "清单", "教程", "观点", "资讯", "菜谱", "好物", "灵感", "工具")
+KINDS = ("攻略", "清单", "教程", "经验", "观点", "资讯", "菜谱", "好物", "灵感", "工具", "娱乐")
 ENTITY_TYPES = ("地点", "工具", "品牌", "人物", "作品", "概念")
 DEFAULT = {"topics": [], "kinds": list(KINDS), "synonyms": {}}
 
