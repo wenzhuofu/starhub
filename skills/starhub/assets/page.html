@@ -2,11 +2,541 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
 <title>starhub</title>
+<style>
+:root {
+  color-scheme: light;
+  --paper: #f7f5f0;
+  --paper-2: #efebe3;
+  --field: #fffdf9;
+  --ink: #1f1d1a;
+  --ink-2: #57524a;
+  --ink-3: #6c665b;
+  --rule: #e3ded4;
+  --rule-strong: #cdc6b8;
+  --seal: #b23a2e;
+  --seal-fg: #b23a2e;
+  --seal-text: #fffaf5;
+  --mark: #f3e2a2;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC",
+          "Source Han Sans SC", system-ui, sans-serif;
+  --radius: 6px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --max: 1200px;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #161513;
+    --paper-2: #201e1b;
+    --field: #1c1a17;
+    --ink: #ece7dd;
+    --ink-2: #bab3a6;
+    --ink-3: #908a7e;
+    --rule: #2d2a26;
+    --rule-strong: #45413a;
+    --seal: #c4473a;
+    --seal-fg: #e0685a;
+    --seal-text: #fff7f2;
+    --mark: #5e4b18;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-color: var(--rule-strong) transparent; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 0.9375rem/1.6 var(--font);
+  font-feature-settings: "palt" 0;
+  caret-color: var(--seal-fg);
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--mark); color: var(--ink); }
+[hidden] { display: none !important; }
+button, input { font: inherit; color: inherit; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--seal-fg); outline-offset: 2px; border-radius: 3px; }
+
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--gutter); }
+.wrap.body { padding-bottom: 64px; }
+.num, .date { font-variant-numeric: tabular-nums; }
+
+/* masthead */
+.masthead {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding-top: calc(24px + env(safe-area-inset-top, 0px));
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.seal {
+  display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 5px;
+  background: var(--seal); color: var(--seal-text);
+  box-shadow: inset 0 0 0 2px var(--seal), inset 0 0 0 3px color-mix(in srgb, var(--seal-text) 55%, transparent);
+  font-size: 16px; font-weight: 700; line-height: 1;
+}
+.wordmark { font-size: 1.125rem; font-weight: 650; letter-spacing: -0.01em; }
+.synced { margin: 0; color: var(--ink-3); font-size: 0.8125rem; }
+
+.intro { padding: 40px 0 20px; }
+.intro h1 { margin: 0; font-size: 1.75rem; line-height: 1.25; font-weight: 650; letter-spacing: -0.01em; }
+.intro p { margin: 6px 0 0; color: var(--ink-2); }
+
+/* toolbar */
+.toolbar {
+  position: sticky; top: 0; z-index: 2;
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+.bar { max-width: var(--max); margin: 0 auto; padding: 12px var(--gutter); }
+.row1 { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.search { position: relative; flex: 1 1 340px; max-width: 560px; }
+.search svg { position: absolute; left: 12px; top: 50%; translate: 0 -50%; color: var(--ink-3); pointer-events: none; }
+.search input {
+  width: 100%; height: 40px; padding: 0 40px 0 38px;
+  background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  outline: none; -webkit-appearance: none; appearance: none;
+}
+.search input::placeholder { color: var(--ink-3); }
+.search input::-webkit-search-cancel-button { -webkit-appearance: none; display: none; }
+.search input:hover { border-color: var(--ink-3); }
+.search input:focus-visible { border-color: var(--seal-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--seal-fg) 22%, transparent); }
+.key {
+  position: absolute; right: 10px; top: 50%; translate: 0 -50%;
+  min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid var(--rule-strong); border-radius: 4px;
+  color: var(--ink-3); font: 500 0.75rem/18px var(--font); text-align: center;
+}
+.search input:focus-visible ~ .key, .search.has-q .key { display: none; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius);
+  background: transparent; color: var(--ink-2); cursor: pointer; white-space: nowrap;
+}
+.chip .n { color: var(--ink-3); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.chip:hover { background: var(--paper-2); color: var(--ink); }
+.chip:active { translate: 0 1px; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.chip[aria-pressed="true"] .n { color: color-mix(in srgb, var(--paper) 70%, transparent); }
+.chip:disabled { opacity: .45; cursor: default; }
+
+.row2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 4px; margin-top: 10px; }
+.row2 .chip { height: 28px; padding: 0 10px; font-size: 0.875rem; }
+.row2:empty { display: none; }
+.more { color: var(--ink-3); }
+.result { margin: 0 0 0 auto; color: var(--ink-3); font-size: 0.8125rem; white-space: nowrap; }
+.result:empty { display: none; }
+
+/* list */
+.list { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.list col.c-src { width: 6.5rem; }
+.list col.c-when { width: 30%; }
+.list col.c-topic { width: 8.5rem; }
+.list col.c-date { width: 4.5rem; }
+.list thead th {
+  padding: 14px 12px 10px; text-align: left; vertical-align: bottom;
+  color: var(--ink-3); font-size: 0.8125rem; font-weight: 500;
+  border-bottom: 1px solid var(--rule-strong);
+}
+.list th.num, .list td.date { text-align: right; }
+.list td { padding: 14px 12px; vertical-align: top; border-bottom: 1px solid var(--rule); min-width: 0; overflow-wrap: anywhere; }
+.list tr.item:hover td { background: var(--paper-2); }
+
+.month td { padding: 28px 12px 8px; border-bottom: 1px solid var(--rule-strong); }
+.month h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 0.875rem; font-weight: 600; color: var(--ink); }
+.month .n { color: var(--ink-3); font-weight: 400; font-size: 0.8125rem; }
+
+.src-btn {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  color: var(--ink-2); font-size: 0.875rem; text-align: left;
+  text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px;
+}
+.src-btn:hover { color: var(--ink); text-decoration-color: var(--rule-strong); }
+.sub { display: block; margin-top: 2px; color: var(--ink-3); font-size: 0.8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.title {
+  font-weight: 600; text-decoration: none;
+  text-decoration-line: underline; text-decoration-color: transparent;
+  text-decoration-thickness: 1px; text-underline-offset: 4px;
+}
+.title:hover { text-decoration-color: var(--rule-strong); }
+.new {
+  display: inline-block; margin-left: 8px; padding: 0 4px; translate: 0 -1px;
+  border: 1px solid var(--seal-fg); border-radius: 3px;
+  color: var(--seal-fg); font-size: 0.6875rem; font-weight: 600; line-height: 16px; vertical-align: middle;
+}
+.what { margin: 4px 0 0; color: var(--ink-2); font-size: 0.875rem; }
+.pending { color: var(--ink-3); }
+.when { font-size: 0.875rem; }
+.what, .when { text-wrap: pretty; }
+.topic-btn, .sub { text-wrap: balance; }
+.topic-btn {
+  padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  color: var(--ink-2); font-size: 0.875rem;
+  text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px;
+}
+.topic-btn:hover { color: var(--ink); text-decoration-color: var(--rule-strong); }
+.date { color: var(--ink-3); font-size: 0.8125rem; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+
+/* empty states */
+.empty { padding: 72px 0; max-width: 34rem; }
+.empty h2 { margin: 0 0 8px; font-size: 1.125rem; font-weight: 600; }
+.empty p { margin: 0; color: var(--ink-2); }
+.empty code { padding: 1px 6px; border-radius: 4px; background: var(--paper-2); font: 0.875rem/1.6 ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; }
+.empty .btn {
+  margin-top: 16px; height: 34px; padding: 0 14px; border: 1px solid var(--rule-strong); border-radius: var(--radius);
+  background: var(--field); cursor: pointer;
+}
+.empty .btn:hover { border-color: var(--ink-3); }
+
+.foot { margin-top: 40px; color: var(--ink-3); font-size: 0.8125rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .chip, .src-btn, .topic-btn, .title, .search input, .list td, .empty .btn {
+    transition: background-color .15s var(--ease), color .15s var(--ease), border-color .15s var(--ease), text-decoration-color .15s var(--ease), box-shadow .15s var(--ease);
+  }
+}
+
+@media (max-width: 760px) {
+  .intro { padding: 28px 0 16px; }
+  .intro h1 { font-size: 1.5rem; }
+  .search { flex-basis: 100%; max-width: none; }
+  .key { display: none; }
+  .bar { padding-top: 10px; padding-bottom: 10px; }
+  .row1 { gap: 8px 12px; }
+  .row2 {
+    flex-wrap: nowrap; overflow-x: auto; margin: 8px calc(var(--gutter) * -1) 0; padding: 0 var(--gutter);
+    scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent);
+  }
+  .row2::-webkit-scrollbar { display: none; }
+  .row2 .chip { flex: none; }
+  .list thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .list, .list tbody, .list tr, .list td { display: block; width: 100%; }
+  .list colgroup { display: none; }
+  .list tr.item {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "src date" "content content" "when when" "topic topic";
+    column-gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--rule);
+  }
+  .list tr.item:hover td { background: none; }
+  .list td { padding: 0; border: 0; }
+  .list td.src { grid-area: src; display: flex; gap: 8px; align-items: baseline; }
+  .list td.src .sub { display: inline; margin: 0; }
+  .list td.date { grid-area: date; }
+  .list td.content { grid-area: content; margin-top: 4px; }
+  .list td.when { grid-area: when; margin-top: 6px; }
+  .list td.when:not(:empty)::before { content: "用得上："; color: var(--ink-3); }
+  .list td.topic { grid-area: topic; margin-top: 4px; }
+  .month td { padding: 24px 0 8px; }
+}
+</style>
 </head>
 <body>
-<!-- Stub template. claude will replace the design; the data contract stays the same. -->
+<div class="wrap">
+  <header class="masthead">
+    <div class="brand">
+      <span class="seal" aria-hidden="true">藏</span>
+      <span class="wordmark">starhub</span>
+    </div>
+    <p class="synced" id="synced"></p>
+  </header>
+
+  <section class="intro">
+    <h1 id="count">我的收藏</h1>
+    <p id="sources"></p>
+  </section>
+
+</div>
+
+<div class="toolbar" id="toolbar" hidden>
+  <div class="bar">
+    <div class="row1">
+      <div class="search" id="search">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="4.75" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3.25 3.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <input id="q" type="search" placeholder="搜内容或场景，如：去杭州、做 PPT" autocomplete="off" spellcheck="false" aria-label="搜索收藏">
+        <kbd class="key" aria-hidden="true">/</kbd>
+      </div>
+      <div class="tabs" id="sourceTabs" role="group" aria-label="按来源筛选"></div>
+      <p class="result" id="result" aria-live="polite"></p>
+    </div>
+    <div class="row2" id="topics" role="group" aria-label="按主题筛选"></div>
+  </div>
+</div>
+
+<div class="wrap body">
+  <main>
+    <table class="list" id="list" hidden>
+      <colgroup><col class="c-src"><col class="c-content"><col class="c-when"><col class="c-topic"><col class="c-date"></colgroup>
+      <thead><tr><th scope="col">来源</th><th scope="col">内容</th><th scope="col">什么时候用得上</th><th scope="col">主题</th><th scope="col" class="num">收藏于</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden></div>
+  </main>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+<noscript><div class="wrap"><p>这个页面需要开启 JavaScript 才能显示收藏。</p></div></noscript>
+
 <script id="starhub-data" type="application/json">/*STARHUB_DATA*/</script>
-<p>starhub 页面模板（占位）。</p>
+<script>
+(() => {
+  'use strict';
+  const LABEL = { github: 'GitHub', xhs: '小红书', bili: 'B站' };
+  const ORDER = ['github', 'xhs', 'bili'];
+  const TOP_TOPICS = 12;
+  const $ = (id) => document.getElementById(id);
+
+  let data = null;
+  try { data = JSON.parse($('starhub-data').textContent); } catch (_) { data = null; }
+  const items = (data && Array.isArray(data.items) ? data.items : [])
+    .filter((it) => it && it.id && it.status !== 'archived')
+    .sort((a, b) => String(b.saved || '').localeCompare(String(a.saved || '')) || String(a.id).localeCompare(String(b.id)));
+  const lastDay = String((data && data.last_sync) || '').slice(0, 10);
+
+  const label = (s) => LABEL[s] || s;
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const joinCn = (arr) => arr.length < 2 ? arr.join('') :
+    arr.slice(0, -1).join('、') + '和' + (/^[A-Za-z0-9]/.test(arr[arr.length - 1]) ? ' ' : '') + arr[arr.length - 1];
+  const now = new Date();
+  function cnDate(iso, withTime) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(String(iso || ''));
+    if (!m) return '';
+    const y = +m[1], mo = +m[2], d = +m[3];
+    let s = (y === now.getFullYear() ? '' : y + ' 年 ') + mo + ' 月 ' + d + ' 日';
+    if (withTime && m[4]) s += ' ' + m[4] + ':' + m[5];
+    return s;
+  }
+
+  // ---------- header ----------
+  if (lastDay) $('synced').textContent = cnDate(lastDay) + '同步';
+  if (!items.length) {
+    $('count').textContent = '还没有收藏';
+    $('sources').textContent = '';
+    const empty = $('empty');
+    empty.innerHTML = '<p>在 agent 里输入 <code>/starhub 同步</code>，把 GitHub、小红书和 B站的收藏拉进来，每条都会写好“是什么”和“什么时候用得上”。</p>';
+    empty.hidden = false;
+    $('foot').textContent = '数据只保存在这台电脑上。';
+    return;
+  }
+  $('count').textContent = items.length.toLocaleString('zh-CN') + ' 条收藏';
+  const present = ORDER.filter((s) => items.some((it) => it.source === s))
+    .concat([...new Set(items.map((it) => it.source))].filter((s) => !ORDER.includes(s)));
+  const pending = items.filter((it) => it.status === 'new').length;
+  $('sources').textContent = '来自 ' + joinCn(present.map(label)) + (pending ? '，' + pending.toLocaleString('zh-CN') + ' 条待整理' : '');
+  $('foot').textContent = '数据只保存在这台电脑上，由 /starhub 生成' + (data.generated ? '于 ' + cnDate(data.generated, true) : '') + '。';
+  $('toolbar').hidden = false;
+  $('list').hidden = false;
+
+  // ---------- rows ----------
+  const tbody = $('rows');
+  const frag = document.createDocumentFragment();
+  const rows = [];
+  const months = new Map();
+  for (const it of items) {
+    const ym = String(it.saved || '').slice(0, 7) || '更早';
+    if (!months.has(ym)) {
+      const tr = document.createElement('tr');
+      tr.className = 'month';
+      const [y, m] = ym.split('-');
+      tr.innerHTML = '<td colspan="5"><h2>' + (m ? esc(y) + ' 年 ' + (+m) + ' 月' : esc(ym)) + '<span class="n"></span></h2></td>';
+      frag.appendChild(tr);
+      months.set(ym, { tr, n: tr.querySelector('.n'), count: 0 });
+    }
+    const tr = document.createElement('tr');
+    tr.className = 'item';
+    const sub = it.source === 'github' ? (it.type || '') : it.source === 'bili' ? (it.folder || '') : (it.via && it.via !== 'star' ? it.via : '');
+    const isNew = lastDay && it.seen === lastDay;
+    const hasDesc = !!(it.what || it.when);
+    tr.innerHTML =
+      '<td class="src"><button class="src-btn" type="button" data-source="' + esc(it.source) + '">' + esc(label(it.source)) + '</button>' +
+        (sub ? '<span class="sub" title="' + esc(sub) + '">' + esc(sub) + '</span>' : '') + '</td>' +
+      '<td class="content"><a class="title" href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer"' +
+        (it.author ? ' title="' + esc(label(it.source) + '：' + it.author) + '"' : '') + '></a>' +
+        (isNew ? '<span class="new" title="最近一次同步新加入">新</span>' : '') +
+        '<p class="what' + (hasDesc ? '' : ' pending') + '"></p></td>' +
+      '<td class="when"></td>' +
+      '<td class="topic">' + (it.topic ? '<button class="topic-btn" type="button" data-topic="' + esc(it.topic) + '">' + esc(it.topic) + '</button>' : '') + '</td>' +
+      '<td class="date">' + esc(String(it.saved || '').slice(5)) + '</td>';
+    const title = tr.querySelector('.title'), what = tr.querySelector('.what'), when = tr.querySelector('.when');
+    const topicEl = tr.querySelector('.topic-btn'), subEl = tr.querySelector('.sub');
+    title.textContent = it.title || it.url;
+    what.textContent = it.what || (hasDesc ? '' : '待整理');
+    when.textContent = it.when || '';
+    frag.appendChild(tr);
+    rows.push({
+      it, tr, title, what, when, topicEl, subEl, sub, ym,
+      hay: [it.title, it.what, it.when, it.topic, it.author, it.folder, label(it.source), it.via].filter(Boolean).join('\n').toLowerCase(),
+    });
+  }
+  tbody.appendChild(frag);
+
+  // ---------- facets ----------
+  const topicCount = new Map();
+  for (const r of rows) if (r.it.topic) topicCount.set(r.it.topic, (topicCount.get(r.it.topic) || 0) + 1);
+  const topics = [...topicCount.keys()].sort((a, b) => topicCount.get(b) - topicCount.get(a) || a.localeCompare(b, 'zh-CN'));
+
+  const state = { q: '', source: '', topic: '', allTopics: false };
+  try {
+    const h = new URLSearchParams(location.hash.slice(1));
+    state.q = h.get('q') || '';
+    state.source = h.get('s') || '';
+    state.topic = h.get('t') || '';
+  } catch (_) {}
+  if (state.source && !present.includes(state.source)) state.source = '';
+  if (state.topic && !topicCount.has(state.topic)) state.topic = '';
+  if (state.topic && topics.indexOf(state.topic) >= TOP_TOPICS) state.allTopics = true;
+  $('q').value = state.q;
+
+  const terms = () => state.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const matchQ = (r, ts) => ts.every((t) => r.hay.includes(t));
+
+  function highlight(el, text, ts) {
+    if (!ts.length || !text) { el.textContent = text; return; }
+    const lower = text.toLowerCase();
+    const ranges = [];
+    for (const t of ts) {
+      let i = lower.indexOf(t);
+      while (i !== -1) { ranges.push([i, i + t.length]); i = lower.indexOf(t, i + t.length); }
+    }
+    if (!ranges.length) { el.textContent = text; return; }
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [ranges[0]];
+    for (const r of ranges.slice(1)) {
+      const last = merged[merged.length - 1];
+      if (r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else merged.push(r);
+    }
+    let html = '', pos = 0;
+    for (const [a, b] of merged) { html += esc(text.slice(pos, a)) + '<mark>' + esc(text.slice(a, b)) + '</mark>'; pos = b; }
+    el.innerHTML = html + esc(text.slice(pos));
+  }
+
+  function chip(text, n, pressed, attrs) {
+    return '<button class="chip" type="button" aria-pressed="' + pressed + '"' + (n === 0 && !pressed ? ' disabled' : '') + ' ' + attrs + '>' +
+      esc(text) + (n == null ? '' : '<span class="n">' + n.toLocaleString('zh-CN') + '</span>') + '</button>';
+  }
+
+  function render() {
+    const ts = terms();
+    const qMatch = rows.map((r) => matchQ(r, ts));
+    // facet counts: each facet ignores its own filter
+    const bySource = new Map();
+    const byTopic = new Map();
+    let qTopicAll = 0, qSourceAll = 0;
+    rows.forEach((r, i) => {
+      if (!qMatch[i]) return;
+      if (!state.topic || r.it.topic === state.topic) { bySource.set(r.it.source, (bySource.get(r.it.source) || 0) + 1); qTopicAll++; }
+      if (!state.source || r.it.source === state.source) { if (r.it.topic) byTopic.set(r.it.topic, (byTopic.get(r.it.topic) || 0) + 1); qSourceAll++; }
+    });
+
+    $('sourceTabs').innerHTML = chip('全部', qTopicAll, !state.source, 'data-source=""') +
+      present.map((s) => chip(label(s), bySource.get(s) || 0, state.source === s, 'data-source="' + esc(s) + '"')).join('');
+
+    const narrowed = ts.length > 0 || !!state.source;
+    const pool = narrowed ? topics.filter((t) => byTopic.get(t) || t === state.topic) : topics;
+    const shown = state.allTopics ? pool : pool.slice(0, TOP_TOPICS);
+    let th = chip('全部主题', null, !state.topic, 'data-topic=""') +
+      shown.map((t) => chip(t, byTopic.get(t) || 0, state.topic === t, 'data-topic="' + esc(t) + '"')).join('');
+    if (pool.length > TOP_TOPICS) {
+      th += '<button class="chip more" type="button" data-more="1" aria-expanded="' + state.allTopics + '">' +
+        (state.allTopics ? '收起' : '更多主题 ' + (pool.length - TOP_TOPICS)) + '</button>';
+    }
+    $('topics').innerHTML = pool.length ? th : '';
+
+    for (const m of months.values()) m.count = 0;
+    let visible = 0;
+    rows.forEach((r, i) => {
+      const show = qMatch[i] && (!state.source || r.it.source === state.source) && (!state.topic || r.it.topic === state.topic);
+      r.tr.hidden = !show;
+      if (!show) return;
+      visible++;
+      months.get(r.ym).count++;
+      highlight(r.title, r.it.title || r.it.url, ts);
+      if (r.it.what) highlight(r.what, r.it.what, ts);
+      highlight(r.when, r.it.when || '', ts);
+      if (r.topicEl) highlight(r.topicEl, r.it.topic, ts);
+      if (r.subEl) highlight(r.subEl, r.sub, ts);
+    });
+    for (const m of months.values()) {
+      m.tr.hidden = m.count === 0;
+      m.n.textContent = m.count.toLocaleString('zh-CN') + ' 条';
+    }
+
+    const filtered = ts.length || state.source || state.topic;
+    $('result').textContent = filtered ? (visible ? '找到 ' + visible.toLocaleString('zh-CN') + ' 条' : '') : '';
+    $('search').classList.toggle('has-q', !!state.q);
+    const empty = $('empty');
+    if (!visible) {
+      empty.innerHTML = '<h2>没有找到符合条件的收藏</h2><p>' +
+        (ts.length ? '换个说法试试，比如写场景“去杭州”“做 PPT”，或者用更短的词。' : '这个组合下还没有收藏。') +
+        '</p><button class="btn" type="button" data-clear="1">清除筛选</button>';
+      empty.hidden = false;
+      $('list').hidden = true;
+    } else {
+      empty.hidden = true;
+      $('list').hidden = false;
+    }
+
+    const h = new URLSearchParams();
+    if (state.q) h.set('q', state.q);
+    if (state.source) h.set('s', state.source);
+    if (state.topic) h.set('t', state.topic);
+    const hash = h.toString();
+    try { history.replaceState(null, '', hash ? '#' + hash : location.pathname + location.search); } catch (_) {}
+  }
+
+  function keepListInView() {
+    const bar = $('toolbar');
+    const top = $('list').getBoundingClientRect().top + window.scrollY - bar.offsetHeight;
+    if (window.scrollY > top) window.scrollTo({ top });
+  }
+
+  let timer = 0;
+  $('q').addEventListener('input', (e) => {
+    state.q = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(render, rows.length > 1500 ? 120 : 40);
+  });
+  $('q').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (state.q) { state.q = ''; e.target.value = ''; render(); } else e.target.blur();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    const tag = (document.activeElement && document.activeElement.tagName) || '';
+    if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      $('q').focus();
+      $('q').select();
+    }
+  });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.clear) { state.q = ''; state.source = ''; state.topic = ''; $('q').value = ''; render(); $('q').focus(); return; }
+    if (b.dataset.more) { state.allTopics = !state.allTopics; render(); return; }
+    if ('source' in b.dataset) {
+      state.source = b.closest('#rows') ? b.dataset.source : (state.source === b.dataset.source ? '' : b.dataset.source);
+      render(); keepListInView(); return;
+    }
+    if ('topic' in b.dataset) {
+      state.topic = b.closest('#rows') ? b.dataset.topic : (state.topic === b.dataset.topic ? '' : b.dataset.topic);
+      if (state.topic && topics.indexOf(state.topic) >= TOP_TOPICS) state.allTopics = true;
+      render(); keepListInView();
+    }
+  });
+
+  render();
+})();
+</script>
 </body>
 </html>
