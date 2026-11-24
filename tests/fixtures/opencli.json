@@ -1,0 +1,157 @@
+{
+  "xiaohongshu_saved": {
+    "ok": true,
+    "data": [
+      {
+        "rank": 1,
+        "id": "saved",
+        "title": "杭州 Citywalk",
+        "author": "小林",
+        "likes": "24",
+        "type": "normal",
+        "url": "https://www.xiaohongshu.com/explore/saved?xsec_token=A%2B%3D&xsec_source=pc_user"
+      }
+    ]
+  },
+  "xiaohongshu_liked": {
+    "ok": true,
+    "data": [
+      {
+        "rank": 1,
+        "id": "liked",
+        "title": "江边散步",
+        "author": "小周",
+        "likes": "8",
+        "type": "video",
+        "url": "https://www.xiaohongshu.com/explore/liked?xsec_token=B%3D&xsec_source=pc_user"
+      }
+    ]
+  },
+  "xiaohongshu_note": {
+    "ok": true,
+    "data": [
+      {
+        "field": "title",
+        "value": "杭州 Citywalk"
+      },
+      {
+        "field": "content",
+        "value": "西湖步行路线"
+      }
+    ]
+  },
+  "bilibili_me": {
+    "ok": true,
+    "data": {
+      "name": "样例用户",
+      "uid": 12345,
+      "level": 4,
+      "coins": 5,
+      "followers": 0,
+      "following": 2
+    }
+  },
+  "bilibili_nav": {
+    "ok": true,
+    "data": {
+      "code": 0,
+      "data": {
+        "isLogin": true,
+        "wbi_img": {
+          "img_url": "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+          "sub_url": "https://i0.hdslb.com/bfs/wbi/abcdef0123456789abcdef0123456789.png"
+        }
+      }
+    }
+  },
+  "bilibili_folders": {
+    "ok": true,
+    "data": {
+      "code": 0,
+      "data": {
+        "list": [
+          {
+            "id": 111,
+            "title": "默认收藏夹",
+            "media_count": 40
+          },
+          {
+            "id": 222,
+            "title": "教程",
+            "media_count": 1
+          }
+        ]
+      }
+    }
+  },
+  "bilibili_page": {
+    "ok": true,
+    "data": {
+      "code": 0,
+      "data": {
+        "has_more": false,
+        "medias": [
+          {
+            "bvid": "BV1xx411c7mD",
+            "title": "实用教程",
+            "upper": {
+              "name": "示例作者"
+            },
+            "intro": "从零开始",
+            "cover": "https://i0.hdslb.com/bfs/archive/example.jpg",
+            "duration": 200,
+            "fav_time": 1704153600
+          }
+        ]
+      }
+    }
+  },
+  "bilibili_video": {
+    "ok": true,
+    "data": [
+      {
+        "field": "title",
+        "value": "实用教程"
+      },
+      {
+        "field": "description",
+        "value": "从零开始"
+      }
+    ]
+  },
+  "bilibili_subtitle": {
+    "ok": true,
+    "data": [
+      {
+        "index": 1,
+        "from": 0,
+        "to": 2,
+        "content": "今天讲这个工具",
+        "language": "zh-CN",
+        "track_type": "human"
+      }
+    ]
+  },
+  "doctor": {
+    "ok": true,
+    "data": {
+      "extensionConnected": true
+    }
+  },
+  "auth_required": {
+    "ok": false,
+    "error": {
+      "code": "AUTH_REQUIRED",
+      "message": "requires login",
+      "exitCode": 77
+    }
+  },
+  "no_subtitles": {
+    "ok": false,
+    "error": {
+      "code": "EMPTY_RESULT",
+      "message": "no subtitles",
+      "exitCode": 66
+    }
+  }
+}
