@@ -70,13 +70,7 @@ a { color: inherit; }
 /* masthead */
 .masthead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: calc(20px + env(safe-area-inset-top, 0px)); padding-bottom: 16px; }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.seal {
-  display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 5px;
-  background: var(--seal); color: var(--seal-text);
-  box-shadow: inset 0 0 0 2px var(--seal), inset 0 0 0 3px color-mix(in srgb, var(--seal-text) 55%, transparent);
-  font-size: 16px; font-weight: 700; line-height: 1;
-}
-.wordmark { font-size: 1.125rem; font-weight: 650; letter-spacing: -0.01em; }
+.wordmark { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
 .synced { margin: 0; color: var(--ink-3); font-size: 0.8125rem; }
 
 /* toolbar */
@@ -112,6 +106,10 @@ a { color: inherit; }
 .chip:disabled { opacity: .45; cursor: default; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 8px; }
 .chips .chip { height: 28px; padding: 0 10px; font-size: 0.875rem; }
+.chips.sub { margin-left: 10px; }
+.chips.sub .chip { height: 26px; font-size: 0.8125rem; }
+.toc-filter { margin-top: 16px; }
+.toc .side .comp { display: block; color: var(--ink-3); }
 
 /* knowledge layout */
 .shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); gap: 56px; padding-top: 32px; }
@@ -270,7 +268,7 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 <body>
 <div class="wrap">
   <header class="masthead">
-    <a class="brand" href="#v=k" aria-label="starhub 首页"><span class="seal" aria-hidden="true">藏</span><span class="wordmark">starhub</span></a>
+    <a class="brand" href="#v=k"><span class="wordmark">starhub</span></a>
     <p class="synced" id="synced"></p>
   </header>
 </div>
@@ -315,7 +313,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   const live = (it) => it && it.id && it.status !== 'hidden' && it.status !== 'archived' && !it.removed;
   const byDate = (a, b) => String(b.saved || '').localeCompare(String(a.saved || '')) || String(a.id).localeCompare(String(b.id));
   const items = (Array.isArray(data.items) ? data.items : []).filter(live).sort(byDate);
-  const tools = (Array.isArray(data.tools) ? data.tools : []).filter(live).sort(byDate);
+  const tools = (Array.isArray(data.tools) ? data.tools : []).filter(live)
+    .map((it) => (it.source ? it : { ...it, source: String(it.id).split(':')[0] })).sort(byDate);
   const topics = new Map();
   for (const t of Array.isArray(data.topics) ? data.topics : []) if (t && t.id) topics.set(t.id, t);
   const lastDay = String(data.last_sync || '').slice(0, 10);
@@ -338,6 +337,16 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   const pendingCount = items.filter((it) => isPending(it.topic)).length;
   const leafCount = [...topics.values()].filter((t) => !isPending(t.id) && !(children.get(t.id) || []).length).length;
   const urlIndex = new Map(items.concat(tools).map((it) => [it.url, it]));
+  const SRC_ORDER = ['xhs', 'bili', 'github'];
+  const srcSort = (a, b) => ((SRC_ORDER.indexOf(a) + 1) || 99) - ((SRC_ORDER.indexOf(b) + 1) || 99);
+  const subtreeItems = (t) => (membersOf.get(t.id) || []).concat(...(children.get(t.id) || []).map(subtreeItems));
+  const countIn = (t, s) => subtreeItems(t).filter((it) => !s || it.source === s).length;
+  const composition = (list) => {
+    const m = new Map();
+    for (const it of list) m.set(it.source, (m.get(it.source) || 0) + 1);
+    return [...m.entries()].sort((a, b) => srcSort(a[0], b[0]));
+  };
+  const compText = (list) => composition(list).map(([s, n]) => label(s) + ' ' + fmtN(n)).join('，');
 
   // ---------- state ----------
   const state = { v: 'k', t: '', q: '', s: '', k: '' };
@@ -448,12 +457,29 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   }
   function rail(active) {
     if (!roots.length) return '';
-    const row = (t, deep) => '<li' + (deep ? '' : ' class="part"') + '><a href="' + esc(href({ v: 'k', t: t.id, q: '' })) + '"' +
-      (t.id === active ? ' aria-current="page"' : '') + '><span>' + esc(t.name) + '</span><span class="n">' + fmtN(t.size ?? sizeOf(t)) + '</span></a>' +
-      ((children.get(t.id) || []).length && !deep ? '<ol>' + (children.get(t.id) || []).sort(bySize).map((c) => row(c, true)).join('') + '</ol>' : '') + '</li>';
-    return '<nav class="rail" aria-label="主题目录"><h2>主题</h2><ol>' + roots.map((t) => row(t, false)).join('') +
-      (pendingCount ? '<li class="part"><a href="' + esc(href({ v: 'a', k: '', s: '', t: PENDING, q: '' })) + '"><span>待定</span><span class="n">' + fmtN(pendingCount) + '</span></a></li>' : '') +
+    const s = state.s;
+    const link = (t) => {
+      const n = countIn(t, s);
+      if (s && !n) return '';
+      return '<a href="' + esc(href({ v: 'k', t: t.id, q: '' })) + '"' + (t.id === active ? ' aria-current="page"' : '') +
+        '><span>' + esc(t.name) + '</span><span class="n">' + fmtN(n) + '</span></a>';
+    };
+    const parts = roots.map((r) => {
+      const head = link(r);
+      if (!head) return '';
+      const kids = (children.get(r.id) || []).slice().sort(bySize).map((c) => { const a = link(c); return a ? '<li>' + a + '</li>' : ''; }).join('');
+      return '<li class="part">' + head + (kids ? '<ol>' + kids + '</ol>' : '') + '</li>';
+    }).join('');
+    const pend = items.filter((it) => isPending(it.topic) && (!s || it.source === s)).length;
+    return '<nav class="rail" aria-label="主题目录"><h2>主题</h2><ol>' + parts +
+      (pend ? '<li class="part"><a href="' + esc(href({ v: 'a', k: '', t: PENDING, q: '' })) + '"><span>待定</span><span class="n">' + fmtN(pend) + '</span></a></li>' : '') +
       '</ol></nav>';
+  }
+  function sourceChips(list, allLabel) {
+    const srcs = [...new Set(list.map((it) => it.source))].sort(srcSort);
+    if (srcs.length < 2) return '';
+    return '<div class="chips" role="group" aria-label="按来源筛选">' + chip(allLabel || '全部来源', null, !state.s, 'data-s=""') +
+      srcs.map((s) => chip(label(s), list.filter((it) => it.source === s).length, state.s === s, 'data-s="' + esc(s) + '"')).join('') + '</div>';
   }
   function table(rows, mode, ts, months, inTopic) {
     // mode: 'items' (knowledge) | 'tools'
@@ -472,17 +498,18 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
       }
       count++;
       const via = Array.isArray(it.via) ? it.via.filter((v) => v && v !== 'star').join('、') : (it.via && it.via !== 'star' ? it.via : '');
-      const sub = mode === 'tools' ? [it.type, it.level].filter(Boolean).join('，') : it.source === 'bili' ? (it.folder || '') : via;
+      const isTool = mode === 'tools' || it._tool;
+      const sub = isTool ? [it.type, it.level].filter(Boolean).join('，') : it.source === 'bili' ? (it.folder || '') : via;
       const isNew = lastDay && it.seen === lastDay;
-      const first = mode === 'tools' ? it.what : '';
-      const aside = mode === 'tools' ? it.when : it.scene;
+      const first = isTool ? it.what : '';
+      const aside = isTool ? it.when : it.scene;
       body += '<tr class="item">' +
         '<td class="c-src"><span class="src">' + esc(label(it.source)) + '</span>' + (sub ? '<span class="sub" title="' + esc(sub) + '">' + esc(sub) + '</span>' : '') + '</td>' +
         '<td class="c-content"><a class="title" href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer"' + (it.author ? ' title="' + esc(label(it.source) + '：' + it.author) + '"' : '') + '>' +
           hl(it.title || it.url, ts) + '</a>' + (isNew ? '<span class="new" title="最近一次同步新加入">新</span>' : '') +
           (first ? '<p class="what">' + hl(first, ts) + '</p>' : (it.status === 'new' ? '<p class="what pending">待归类</p>' : '')) + '</td>' +
-        '<td class="c-aside aside" data-label="' + (mode === 'tools' ? '用得上' : '场景') + '">' + hl(aside || '', ts) + '</td>' +
-        '<td class="c-tag">' + (!inTopic && it.topic && !isPending(it.topic) ? topicLink(it.topic) : (it.kind ? '<span class="tag">' + esc(it.kind) + '</span>' : '')) + '</td>' +
+        '<td class="c-aside aside" data-label="' + (isTool ? '用得上' : '场景') + '">' + hl(aside || '', ts) + '</td>' +
+        '<td class="c-tag">' + (!inTopic && !isTool && it.topic && topics.has(it.topic) && !isPending(it.topic) ? topicLink(it.topic) : (it.kind ? '<span class="tag">' + esc(it.kind) + '</span>' : '')) + '</td>' +
         '<td class="date">' + esc(String(it.saved || '').slice(5)) + '</td></tr>';
     }
     return count ? '<table class="list"><colgroup><col class="c-src"><col class="c-content"><col class="c-aside"><col class="c-tag"><col class="c-date"></colgroup>' +
@@ -497,16 +524,24 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
         '收藏已经同步进来了。在 agent 里输入 <code>/starhub 整理</code>，把它们归到主题，再写成主题笔记。',
         '<a class="btn" href="' + esc(href({ v: 'a', t: '', q: '' })) + '">先看全部收藏</a>');
     }
-    const classified = items.length - pendingCount;
-    let html = '<h1>知识库</h1><p class="meta"><span>' + fmtN(leafCount) + ' 个主题</span><span>' + fmtN(classified) + ' 条收藏已归类</span>' +
-      (pendingCount ? '<a href="' + esc(href({ v: 'a', t: PENDING, q: '' })) + '">' + fmtN(pendingCount) + ' 条待定</a>' : '') + '</p>';
+    const s = state.s;
+    const scoped = items.filter((it) => !s || it.source === s);
+    const pend = scoped.filter((it) => isPending(it.topic)).length;
+    let html = '<h1>知识库</h1><p class="meta"><span>' + fmtN(leafCount) + ' 个主题</span><span>' + fmtN(scoped.length - pend) + ' 条收藏已归类</span>' +
+      (pend ? '<a href="' + esc(href({ v: 'a', t: PENDING, q: '' })) + '">' + fmtN(pend) + ' 条待定</a>' : '') + '</p>' +
+      '<div class="toc-filter">' + sourceChips(items) + '</div>';
     for (const r of roots) {
-      const kids = (children.get(r.id) || []).slice().sort(bySize);
+      const rn = countIn(r, s);
+      if (s && !rn) continue;
+      const kids = (children.get(r.id) || []).slice().sort(bySize).filter((c) => !s || countIn(c, s));
       const rows = kids.length ? kids : [r];
-      html += '<section class="toc-part"><h2><a href="' + esc(href({ t: r.id })) + '">' + esc(r.name) + '</a><span class="n">' + fmtN(r.size ?? sizeOf(r)) + ' 条</span></h2><ol class="toc">' +
-        rows.map((t) => '<li><a class="name" href="' + esc(href({ t: t.id })) + '">' + esc(t.name) + '</a>' +
-          '<span class="side"><span class="n">' + fmtN(t.size ?? sizeOf(t)) + ' 条</span>' + (t.updated ? esc(cnDate(t.updated)) + '更新' : '') + '</span>' +
-          (t.summary ? '<p class="sum">' + esc(t.summary) + '</p>' : '<p class="sum pending">还没有笔记</p>') + '</li>').join('') + '</ol></section>';
+      html += '<section class="toc-part"><h2><a href="' + esc(href({ t: r.id })) + '">' + esc(r.name) + '</a><span class="n">' + fmtN(rn) + ' 条</span></h2><ol class="toc">' +
+        rows.map((t) => {
+          const list = subtreeItems(t).filter((it) => !s || it.source === s);
+          return '<li><a class="name" href="' + esc(href({ t: t.id })) + '">' + esc(t.name) + '</a>' +
+            '<span class="side"><span class="n">' + fmtN(list.length) + ' 条</span>' + (s ? '' : '<span class="comp">' + esc(compText(list)) + '</span>') + '</span>' +
+            (t.summary ? '<p class="sum">' + esc(t.summary) + '</p>' : '<p class="sum pending">还没有笔记</p>') + '</li>';
+        }).join('') + '</ol></section>';
     }
     return html;
   }
@@ -517,12 +552,15 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     for (let p = t; p; p = topics.get(p.parent || '')) chain.unshift(p);
     const crumbs = '<nav class="crumbs" aria-label="位置"><a href="#v=k">知识库</a>' +
       chain.slice(0, -1).map((p) => '<a href="' + esc(href({ t: p.id })) + '">' + esc(p.name) + '</a>').join('') + '<span>' + esc(t.name) + '</span></nav>';
-    const own = (membersOf.get(t.id) || []);
+    const ownAll = (membersOf.get(t.id) || []);
+    const own = ownAll.filter((it) => !state.s || it.source === state.s);
     const kids = (children.get(t.id) || []).slice().sort(bySize);
     const wiki = String(data.wiki_dir || '');
     const sep = wiki.includes('\\') ? '\\' : '/';
     const obsidian = wiki && t.note ? 'obsidian://open?path=' + encodeURIComponent(wiki + sep + t.id.split('/').join(sep) + '.md') : '';
-    let html = crumbs + '<h1>' + esc(t.name) + '</h1><p class="meta"><span>' + fmtN(t.size ?? sizeOf(t)) + ' 条收藏</span>' +
+    const all = subtreeItems(t);
+    let html = crumbs + '<h1>' + esc(t.name) + '</h1><p class="meta"><span>' + fmtN(all.length) + ' 条收藏' +
+      (composition(all).length > 1 ? '（' + esc(compText(all)) + '）' : '') + '</span>' +
       (t.updated ? '<span>' + esc(cnDate(t.updated)) + '更新</span>' : '') + (t.coverage ? '<span title="有正文的收藏 / 全部收藏">' + esc(String(t.coverage).replace('/', ' / ')) + ' 有正文</span>' : '') +
       (t.owner === 'user' ? '<span>由你维护</span>' : '') +
       (obsidian ? '<a href="' + esc(obsidian) + '">在 Obsidian 中打开</a>' : '') + '</p>';
@@ -536,7 +574,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     const rel = (t.related || []).filter((r) => topics.has(r));
     if (rel.length) html += '<section class="section"><h2>相关主题</h2><div class="related">' +
       rel.map((r) => '<a class="chip" href="' + esc(href({ t: r })) + '">' + esc(topics.get(r).name) + '</a>').join('') + '</div></section>';
-    if (own.length) html += '<section class="section"><h2>这个主题下的收藏<span class="n">' + fmtN(own.length) + '</span></h2>' + table(own, 'items', [], false, true) + '</section>';
+    if (ownAll.length) html += '<section class="section"><h2>这个主题下的收藏<span class="n">' + fmtN(own.length) + '</span></h2>' + sourceChips(ownAll) +
+      (own.length ? table(own, 'items', [], false, true) : '<p class="meta">这个来源下没有收藏。</p>') + '</section>';
     return html;
   }
   function viewSearch() {
@@ -555,33 +594,55 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
   }
   function viewTools() {
     const ts = terms();
-    const rows = tools.filter((it) => matches(it, ts));
     if (!tools.length) return empty('还没有工具', '在 GitHub 上 star 的项目会出现在这里。在 agent 里输入 <code>/starhub 同步</code>。');
-    return '<div class="head-row"><div><h1>工具</h1><p class="meta"><span>' + fmtN(tools.length) + ' 个 star 过的项目</span><span>agent 按“什么时候用得上”挑选并调用</span></p></div></div>' +
-      '<div class="section" style="margin-top:20px">' + (rows.length ? table(rows, 'tools', ts, false) : empty('没有找到', '换个说法试试。', '<button class="btn" type="button" data-clear="1">清除搜索</button>')) + '</div>';
+    const comp = composition(tools);
+    const from = comp.length === 1
+      ? '来自 ' + label(comp[0][0]) + ' 的 ' + fmtN(comp[0][1]) + (comp[0][0] === 'github' ? ' 个 star' : ' 条收藏')
+      : '来自 ' + comp.map(([s, n]) => label(s) + ' ' + fmtN(n)).join('、');
+    const rows = tools.filter((it) => (!state.s || it.source === state.s) && matches(it, ts));
+    return '<div class="head-row"><div><h1>工具</h1><p class="meta"><span>' + from + '</span><span>agent 按“什么时候用得上”挑选并调用</span></p></div></div>' +
+      '<div class="section" style="margin-top:20px">' + sourceChips(tools) +
+      (rows.length ? table(rows, 'tools', ts, false) : empty('没有找到', '换个说法试试。', '<button class="btn" type="button" data-clear="1">清除搜索</button>')) + '</div>';
   }
   function viewAll() {
     const ts = terms();
     const pendingOnly = state.t === PENDING;
-    const pool = items.filter((it) => (!pendingOnly || isPending(it.topic)) && matches(it, ts));
-    const sources = [...new Set(items.map((it) => it.source))];
-    const kinds = [...new Set(items.map((it) => it.kind).filter(Boolean))];
-    const rows = pool.filter((it) => (!state.s || it.source === state.s) && (!state.k || it.kind === state.k));
-    const bySrc = (s) => pool.filter((it) => it.source === s && (!state.k || it.kind === state.k)).length;
-    const byKind = (k) => pool.filter((it) => it.kind === k && (!state.s || it.source === state.s)).length;
+    const all = (pendingOnly ? items : items.concat(tools.map((it) => ({ ...it, kind: '工具', _tool: true })))).slice().sort(byDate);
+    const pool = all.filter((it) => (!pendingOnly || isPending(it.topic)) && matches(it, ts));
+    const tsel = pendingOnly ? '' : state.t;
+    const inTopic = (it, id) => !it._tool && (it.topic === id || String(it.topic || '').startsWith(id + '/'));
+    const passS = (it) => !state.s || it.source === state.s;
+    const passK = (it) => !state.k || it.kind === state.k;
+    const passT = (it) => !tsel || inTopic(it, tsel);
+    const rows = pool.filter((it) => passS(it) && passK(it) && passT(it));
+    const cnt = (f) => pool.reduce((n, it) => n + (f(it) ? 1 : 0), 0);
+    const sources = [...new Set(all.map((it) => it.source))].sort(srcSort);
+    const kinds = [...new Set(all.map((it) => it.kind).filter(Boolean))].sort((a, b) => cnt((it) => it.kind === b) - cnt((it) => it.kind === a));
     let html = '<div class="head-row"><div><h1>' + (pendingOnly ? '待定的收藏' : '全部收藏') + '</h1><p class="meta"><span>' + fmtN(rows.length) + ' 条</span>' +
       (pendingOnly ? '<span>还没归到主题，下次整理时处理</span>' : '') + '</p></div></div><div class="section" style="margin-top:16px">';
     if (sources.length > 1) html += '<div class="chips" role="group" aria-label="按来源筛选">' + chip('全部来源', null, !state.s, 'data-s=""') +
-      sources.map((s) => chip(label(s), bySrc(s), state.s === s, 'data-s="' + esc(s) + '"')).join('') + '</div>';
+      sources.map((s) => [s, cnt((it) => it.source === s && passK(it) && passT(it))]).filter(([s, n]) => n || state.s === s)
+        .map(([s, n]) => chip(label(s), n, state.s === s, 'data-s="' + esc(s) + '"')).join('') + '</div>';
     if (kinds.length > 1) html += '<div class="chips" role="group" aria-label="按类型筛选">' + chip('全部类型', null, !state.k, 'data-k=""') +
-      kinds.map((k) => chip(k, byKind(k), state.k === k, 'data-k="' + esc(k) + '"')).join('') + '</div>';
+      kinds.map((k) => [k, cnt((it) => it.kind === k && passS(it) && passT(it))]).filter(([k, n]) => n || state.k === k)
+        .map(([k, n]) => chip(k, n, state.k === k, 'data-k="' + esc(k) + '"')).join('') + '</div>';
+    if (!pendingOnly && roots.length) {
+      const base = (it) => passS(it) && passK(it);
+      const cur1 = tsel ? tsel.split('/')[0] : '';
+      const level1 = roots.map((r) => [r, cnt((it) => base(it) && inTopic(it, r.id))]).filter(([r, n]) => n || r.id === cur1);
+      if (level1.length) html += '<div class="chips" role="group" aria-label="按主题筛选">' + chip('全部主题', null, !tsel, 'data-t=""') +
+        level1.map(([r, n]) => chip(r.name, n, cur1 === r.id, 'data-t="' + esc(r.id) + '"')).join('') + '</div>';
+      const kids = cur1 ? (children.get(cur1) || []).map((c) => [c, cnt((it) => base(it) && inTopic(it, c.id))]).filter(([c, n]) => n || c.id === tsel) : [];
+      if (kids.length) html += '<div class="chips sub" role="group" aria-label="按子主题筛选">' + chip('全部' + topics.get(cur1).name, null, tsel === cur1, 'data-t="' + esc(cur1) + '"') +
+        kids.map(([c, n]) => chip(c.name, n, tsel === c.id, 'data-t="' + esc(c.id) + '"')).join('') + '</div>';
+    }
     html += rows.length ? table(rows.slice(0, 1500), 'items', ts, true) : empty('没有找到符合条件的收藏', '换个说法，或者清除筛选。', '<button class="btn" type="button" data-clear="1">清除筛选</button>');
     return html + '</div>';
   }
 
   // ---------- render ----------
   function render() {
-    const tabs = [['k', '知识', leafCount], ['t', '工具', tools.length], ['a', '全部', items.length]];
+    const tabs = [['k', '知识', leafCount], ['t', '工具', tools.length], ['a', '全部', items.length + tools.length]];
     $('views').innerHTML = tabs.map(([v, name, n]) => '<a class="chip" href="' + esc(href({ v, t: '', s: '', k: '' })) + '"' + (state.v === v ? ' aria-current="page"' : '') + '>' +
       name + '<span class="n">' + fmtN(n) + '</span></a>').join('');
     if ($('q').value !== state.q) $('q').value = state.q;
@@ -625,9 +686,10 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
     }
     const b = e.target.closest('button');
     if (!b) return;
-    if (b.dataset.clear) { go({ q: '', s: '', k: '' }, true); $('q').focus(); return; }
+    if (b.dataset.clear) { go({ q: '', s: '', k: '', t: state.v === 'a' ? '' : state.t }, true); $('q').focus(); return; }
     if ('s' in b.dataset) { go({ s: state.s === b.dataset.s ? '' : b.dataset.s }, true); return; }
-    if ('k' in b.dataset) { go({ k: state.k === b.dataset.k ? '' : b.dataset.k }, true); }
+    if ('k' in b.dataset) { go({ k: state.k === b.dataset.k ? '' : b.dataset.k }, true); return; }
+    if ('t' in b.dataset) { go({ t: state.t === b.dataset.t ? '' : b.dataset.t }, true); }
   });
   window.addEventListener('hashchange', () => { readHash(); render(); if (!state.q) window.scrollTo({ top: 0 }); });
 
