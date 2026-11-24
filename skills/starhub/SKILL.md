@@ -1,6 +1,6 @@
 ---
 name: starhub
-description: 把用户在 GitHub、小红书、B站点过的 star、收藏和赞拉到这台电脑上，每条写好“是什么、什么时候用得上”，生成一张离线网页；用户有任务时，从中挑出能用的工具或内容。只在用户输入 /starhub 时使用。
+description: 把用户在 GitHub、小红书、B站点过的 star、收藏和赞拉到这台电脑上，每条写好“是什么、什么时候用得上”，生成一张离线网页；用户有任务时，从中挑出能用的工具或内容。只在用户输入 /starhub（Codex 中是 $starhub）时使用。
 disable-model-invocation: true
 argument-hint: "<任务> | 同步 | 打开 | 复盘"
 ---

@@ -12,7 +12,7 @@
 npx skills add wenzhuofu/starhub -g
 ```
 
-然后在你的 agent（Claude Code、Codex 等）里输入 `/starhub`，它会带你完成设置：选平台、连接账号、第一次同步。
+然后在你的 agent 里输入 `/starhub`（Codex 里是 `$starhub`），它会带你完成设置：选平台、连接账号、第一次同步。
 
 需要准备：
 
@@ -29,7 +29,7 @@ npx skills add wenzhuofu/starhub -g
 | `/starhub <任务>` | 从收藏里找出能用的。比如 `/starhub 下周去杭州玩两天`、`/starhub 给这个仓库画架构图` |
 | `/starhub 复盘` | 列出取消了的 star、有更新的工具、很久没用的，再挑几条值得回看的 |
 
-平时它完全不会出现：只有你输入 `/starhub` 时才运行。
+平时它完全不会出现：只有你输入 `/starhub` 时才运行。在 Codex 里把 `/starhub` 换成 `$starhub`，用法相同。
 
 ## 支持的平台
 
